@@ -38,6 +38,21 @@ class RetroVisualizer:
         self.leaderboard = Leaderboard()
         self._score_recorded = False
         self.game_over = False
+        self.snake1_death_time = None
+        self.snake2_death_time = None
+        self.DEATH_MESSAGE_DURATION = 3.0  # seconds
+
+        # Initialize game over buttons with proper RGB tuples
+        button_width = 200
+        button_height = 40
+        button_x = (self.env.grid_width * CELL_SIZE - button_width) // 2
+        button_y = (self.env.grid_height * CELL_SIZE) // 2 + 60
+        self.game_over_buttons = [
+            Button(button_x, button_y, button_width, button_height, "Return to Menu",
+                  color=(0, 200, 100), hover_color=(0, 255, 150), text_color=(255, 255, 255)),
+            Button(button_x, button_y + button_height + 20, button_width, button_height, "Select Maze",
+                  color=(0, 100, 200), hover_color=(0, 150, 255), text_color=(255, 255, 255))
+        ]
 
         # Get maze name safely
         if hasattr(self.env.maze, 'maze_file') and self.env.maze.maze_file:
@@ -80,15 +95,18 @@ class RetroVisualizer:
 
         self.screen = pygame.display.set_mode((self.screen_width, self.screen_height))
 
-        # Initialize pause menu buttons
+        # Initialize pause menu buttons with proper RGB tuples
         button_width = 200
         button_height = 50
         button_x = (self.screen_width - button_width) // 2
 
         self.pause_buttons = [
-            Button(button_x, self.screen_height//2 - 60, button_width, button_height, "Resume", (0, 255, 100)),
-            Button(button_x, self.screen_height//2, button_width, button_height, "Select Maze", (0, 150, 255)),
-            Button(button_x, self.screen_height//2 + 60, button_width, button_height, "Quit", (255, 50, 50))
+            Button(button_x, self.screen_height//2 - 60, button_width, button_height, "Resume",
+                  color=(0, 200, 100), hover_color=(0, 255, 150), text_color=(255, 255, 255)),
+            Button(button_x, self.screen_height//2, button_width, button_height, "Select Maze",
+                  color=(0, 100, 200), hover_color=(0, 150, 255), text_color=(255, 255, 255)),
+            Button(button_x, self.screen_height//2 + 60, button_width, button_height, "Quit",
+                  color=(200, 50, 50), hover_color=(255, 80, 80), text_color=(255, 255, 255))
         ]
 
     def draw_grid(self):
@@ -134,6 +152,29 @@ class RetroVisualizer:
         score_font = pygame.font.SysFont('arial', 32)  # Larger font for scores
         info_font = pygame.font.SysFont('arial', 24)   # Regular font for other info
 
+        # Update leaderboard if both snakes are dead and scores haven't been recorded
+        if (self.env.snake1_death_reason and self.env.snake2_death_reason) and \
+           (not hasattr(self, '_score_recorded') or not self._score_recorded):
+            # Determine winner and update leaderboard
+            if snake1_score > snake2_score:
+                winner_color = COLORS['snake1']
+                total_score = snake1_score
+            elif snake2_score > snake1_score:
+                winner_color = COLORS['snake2']
+                total_score = snake2_score
+            else:  # In case of a tie, give it to P1
+                winner_color = COLORS['snake1']
+                total_score = snake1_score
+
+            self.leaderboard.add_score(
+                self.current_maze_name,
+                winner_color,
+                total_score,
+                snake1_score,
+                snake2_score
+            )
+            self._score_recorded = True
+
         # Snake 1 score with glow
         score1_text = f"P1: {snake1_score}"
         score1_surf = score_font.render(score1_text, True, COLORS['snake1'])
@@ -164,83 +205,53 @@ class RetroVisualizer:
         self.screen.blit(episode_surf, (self.screen_width//2 - episode_surf.get_width()//2, self.screen_height - 55))
         self.screen.blit(steps_surf, (self.screen_width//2 - steps_surf.get_width()//2, self.screen_height - 30))
 
-        # Draw death messages and update leaderboard if snakes have died
-        if (hasattr(self.env, 'snake1_death_reason') and self.env.snake1_death_reason) or \
-           (hasattr(self.env, 'snake2_death_reason') and self.env.snake2_death_reason):
+        # Draw death messages with fade effect
+        current_time = time.time()
+        messages = []
 
-            # Determine winner and update leaderboard
-            if not hasattr(self, '_score_recorded') or not self._score_recorded:
-                if snake1_score > snake2_score:
-                    winner_color = COLORS['snake1']
-                    total_score = snake1_score
-                elif snake2_score > snake1_score:
-                    winner_color = COLORS['snake2']
-                    total_score = snake2_score
-                else:  # In case of a tie, give it to P1
-                    winner_color = COLORS['snake1']
-                    total_score = snake1_score
+        # Handle snake1 death message
+        if self.env.snake1_death_reason:
+            if self.snake1_death_time is None:
+                self.snake1_death_time = current_time
+            message1 = self.death_messages.get(self.env.snake1_death_reason, self.env.snake1_death_reason)
+            elapsed_time = current_time - self.snake1_death_time
+            if elapsed_time < self.DEATH_MESSAGE_DURATION:
+                # Calculate alpha based on time remaining
+                alpha = max(0, min(255, int(255 * (1 - elapsed_time / self.DEATH_MESSAGE_DURATION))))
+                messages.append((f"Snake 1: {message1}", alpha))
 
-                self.leaderboard.add_score(
-                    self.current_maze_name,
-                    winner_color,
-                    total_score,
-                    snake1_score,
-                    snake2_score
-                )
-                self._score_recorded = True
+        # Handle snake2 death message
+        if self.env.snake2_death_reason:
+            if self.snake2_death_time is None:
+                self.snake2_death_time = current_time
+            message2 = self.death_messages.get(self.env.snake2_death_reason, self.env.snake2_death_reason)
+            elapsed_time = current_time - self.snake2_death_time
+            if elapsed_time < self.DEATH_MESSAGE_DURATION:
+                # Calculate alpha based on time remaining
+                alpha = max(0, min(255, int(255 * (1 - elapsed_time / self.DEATH_MESSAGE_DURATION))))
+                messages.append((f"Snake 2: {message2}", alpha))
 
-            # Create a semi-transparent background for death messages
-            messages = []
-            if self.env.snake1_death_reason:
-                message1 = self.death_messages.get(self.env.snake1_death_reason, self.env.snake1_death_reason)
-                messages.append(f"Snake 1: {message1}")
-            if self.env.snake2_death_reason:
-                message2 = self.death_messages.get(self.env.snake2_death_reason, self.env.snake2_death_reason)
-                messages.append(f"Snake 2: {message2}")
+        # Draw death messages with fade effect
+        if messages:
+            msg_y = 10  # Start at top of screen
+            for message, alpha in messages:
+                death_surf = self.font.render(message, True, (255, 50, 50))
+                death_surf.set_alpha(alpha)
+                msg_x = self.screen_width//2 - death_surf.get_width()//2
+                self.screen.blit(death_surf, (msg_x, msg_y))
+                msg_y += 30  # Space between messages
 
-            if messages:
-                total_height = len(messages) * 30 + 140  # Extra height for buttons
-                msg_bg = pygame.Surface((self.screen_width - 40, total_height))
-                msg_bg.fill((0, 0, 0))
-                msg_bg.set_alpha(180)
+        # Draw game over buttons with retro effect when both snakes are dead
+        if self.env.snake1_death_reason and self.env.snake2_death_reason:
+            # Add a semi-transparent dark overlay for better button visibility
+            overlay = pygame.Surface((self.screen_width, self.screen_height))
+            overlay.fill((0, 0, 20))
+            overlay.set_alpha(150)
+            self.screen.blit(overlay, (0, 0))
 
-                msg_y = self.screen_height//2 - total_height//2
-                self.screen.blit(msg_bg, (20, msg_y))
-
-                for i, message in enumerate(messages):
-                    death_surf = self.font.render(message, True, (255, 50, 50))
-                    msg_x = self.screen_width//2 - death_surf.get_width()//2
-                    self.screen.blit(death_surf, (msg_x, msg_y + i * 30))
-
-                # Add buttons
-                button_width = 200
-                button_height = 40
-                button_spacing = 20
-                button_x = self.screen_width//2 - button_width//2
-                button_y = msg_y + len(messages) * 30 + 20
-
-                # Return to Menu button
-                pygame.draw.rect(self.screen, COLORS['text'], (button_x, button_y, button_width, button_height))
-                pygame.draw.rect(self.screen, COLORS['background'], (button_x + 2, button_y + 2, button_width - 4, button_height - 4))
-                button_text = self.font.render("Return to Menu", True, COLORS['text'])
-                text_x = button_x + (button_width - button_text.get_width())//2
-                text_y = button_y + (button_height - button_text.get_height())//2
-                self.screen.blit(button_text, (text_x, text_y))
-                self.return_button_rect = pygame.Rect(button_x, button_y, button_width, button_height)
-
-                # Select Maze button
-                button_y += button_height + button_spacing
-                pygame.draw.rect(self.screen, COLORS['text'], (button_x, button_y, button_width, button_height))
-                pygame.draw.rect(self.screen, COLORS['background'], (button_x + 2, button_y + 2, button_width - 4, button_height - 4))
-                button_text = self.font.render("Select Maze", True, COLORS['text'])
-                text_x = button_x + (button_width - button_text.get_width())//2
-                text_y = button_y + (button_height - button_text.get_height())//2
-                self.screen.blit(button_text, (text_x, text_y))
-                self.select_maze_button_rect = pygame.Rect(button_x, button_y, button_width, button_height)
-
-        # Draw leaderboard if showing
-        if self.show_leaderboard:
-            self.leaderboard.render(self.screen, self.current_maze_name, self.font)
+            # Draw each button with glow effect
+            for button in self.game_over_buttons:
+                button.draw_glow(self.screen)
 
     def draw_pause_menu(self):
         """Draw the pause menu with retro punk styling."""
@@ -359,7 +370,17 @@ class RetroVisualizer:
 
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     mouse_pos = pygame.mouse.get_pos()
-                    if self.paused:
+
+                    # Handle game over state clicks with new Button class
+                    if self.game_over:
+                        for button in self.game_over_buttons:
+                            if button.is_clicked(mouse_pos):
+                                if button.text == "Return to Menu" or button.text == "Select Maze":
+                                    self.show_maze_selection()
+                                    break
+
+                    # Handle pause menu clicks
+                    elif self.paused:
                         for button in self.pause_buttons:
                             if button.is_clicked(mouse_pos):
                                 if button.text == "Resume":
@@ -368,12 +389,19 @@ class RetroVisualizer:
                                     self.show_maze_selection()
                                 elif button.text == "Quit":
                                     running = False
-                    elif self.game_over:
-                        if hasattr(self, 'return_button_rect') and self.return_button_rect.collidepoint(mouse_pos):
-                            self.show_maze_selection()
-                        elif hasattr(self, 'select_maze_button_rect') and self.select_maze_button_rect.collidepoint(mouse_pos):
-                            self.show_maze_selection()
+                                break
 
+                elif event.type == pygame.MOUSEMOTION:
+                    # Update button hover states
+                    mouse_pos = pygame.mouse.get_pos()
+                    if self.game_over:
+                        for button in self.game_over_buttons:
+                            button.handle_event(event)
+                    elif self.paused:
+                        for button in self.pause_buttons:
+                            button.handle_event(event)
+
+            # Only process game logic if not paused and not game over
             if not self.paused and not self.show_leaderboard and not self.game_over:
                 try:
                     # Get action from model for snake 1
@@ -416,7 +444,8 @@ class RetroVisualizer:
                     # Step the environment with the validated action
                     obs, reward, terminated, truncated, info = self.env.step(action)
 
-                    if info.get("snake1_death_reason") or info.get("snake2_death_reason"):
+                    # Only set game_over when both snakes are dead
+                    if info.get("snake1_death_reason") and info.get("snake2_death_reason"):
                         self.game_over = True
                         self.death_display_time = time.time()
 
@@ -432,7 +461,7 @@ class RetroVisualizer:
             self.render()
 
             # If paused, render the pause menu
-            if self.paused:
+            if self.paused and not self.game_over:
                 self.render_pause_menu()
 
             # Update the display

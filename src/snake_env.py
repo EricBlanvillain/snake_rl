@@ -88,6 +88,19 @@ class SnakeEnv(gym.Env):
         reward = 0.0
 
         if self.reward_approach == "A2":
+            # If snake1 is already dead or just died, return appropriate reward
+            if self.snake1_death_reason or snake1_died:
+                # Only give death penalty once when snake actually dies
+                if snake1_died:
+                    if info.get("snake1_death_reason") == "food_timeout":
+                        return REWARD_TIMEOUT_A2
+                    else:
+                        base_penalty = REWARD_DEATH_A2
+                        if info.get("snake1_death_reason") == "collision_opponent":
+                            base_penalty += REWARD_DEATH_BY_OPPONENT
+                        return base_penalty
+                return 0.0  # No more rewards after death
+
             # Base reward for staying alive
             reward += REWARD_STEP_A2
 
@@ -99,16 +112,8 @@ class SnakeEnv(gym.Env):
             if snake1_ate_powerup:
                 reward += REWARD_POWERUP_A2
 
-            # Death penalties
-            if snake1_died:
-                if info.get("snake1_death_reason") == "food_timeout":
-                    reward += REWARD_TIMEOUT_A2
-                else:
-                    reward += REWARD_DEATH_A2
-                    if info.get("snake1_death_reason") == "collision_opponent":
-                        reward += REWARD_DEATH_BY_OPPONENT
             # Add hunger penalty when getting close to timeout
-            elif self.snake1 and hasattr(self.snake1, 'steps_since_last_food') and self.snake1.steps_since_last_food > 45:  # 75% of timeout threshold
+            if self.snake1 and hasattr(self.snake1, 'steps_since_last_food') and self.snake1.steps_since_last_food > 45:  # 75% of timeout threshold
                 reward += REWARD_HUNGER_A2
 
             # Opponent interaction
@@ -362,24 +367,13 @@ class SnakeEnv(gym.Env):
 
     def _get_opponent_action(self):
         """Determine Snake 2's action based on its policy."""
-        # If snake is dead, return action that maintains current direction
+        # If snake2 is dead, return None to prevent movement
         if self.snake2_death_reason:
-            try:
-                current_dir_index = Direction.DIR_TO_INDEX[self.snake2.direction]
-                return current_dir_index
-            except KeyError:
-                return 0  # Default to UP if direction is invalid
+            return None
 
         # Get valid actions for snake2
         valid_actions_mask = self._get_valid_actions_mask(for_snake2=True)
         valid_indices = [i for i, is_valid in enumerate(valid_actions_mask) if is_valid]
-
-        # If no valid actions, return current direction (snake will die)
-        if not valid_indices:
-            try:
-                return Direction.DIR_TO_INDEX[self.snake2.direction]
-            except KeyError:
-                return 0
 
         if self.opponent_policy_type == 'stay_still':
             # Try to maintain current direction if valid
@@ -435,57 +429,67 @@ class SnakeEnv(gym.Env):
         snake1_died = False
         snake2_died = False
 
-        # Check if the move is valid
-        if not self._is_valid_move(direction):
-            self.snake1_death_reason = "invalid_move"
-            snake1_died = True
-        else:
-            # Update snake1's direction and move
-            self.snake1.direction = direction
-            dx, dy = Direction.get_components(direction)
-            new_head = Point(self.snake1.body[0].x + dx, self.snake1.body[0].y + dy)
-
-            # Check for collisions with walls
-            if self.maze.is_wall(new_head.x, new_head.y):
-                self.snake1_death_reason = "collision_wall"
-                snake1_died = True
-
-            # Check for self-collision
-            elif new_head in self.snake1.body[1:]:
-                self.snake1_death_reason = "collision_self"
-                snake1_died = True
-
-            # Check for collision with opponent
-            elif self.snake2 and new_head in self.snake2.body:
-                self.snake1_death_reason = "collision_opponent"
-                snake1_died = True
-
-            else:
-                # Move is safe, update snake position
-                self.snake1.body.insert(0, new_head)
-
-                # Check for food consumption
-                if self.food and new_head == self.food.position:
-                    snake1_ate_food = True
-                    self.snake1.steps_since_last_food = 0
-                    self.food = None
-                    # Don't remove tail as snake grows
-                else:
-                    self.snake1.body.pop()
-                    self.snake1.steps_since_last_food += 1
-
-                # Check for powerup consumption
-                if self.powerup and new_head == self.powerup.position:
-                    snake1_ate_powerup = True
-                    self.powerup = None
+        # Get initial observation and info for potential early returns
+        observation = self._get_obs()
+        info = self._get_info()
 
         # Check for food timeout for snake1
-        if self.snake1 and not snake1_died and self.snake1.steps_since_last_food >= FOOD_TIMEOUT:
+        if self.snake1 and not self.snake1_death_reason and self.snake1.steps_since_last_food >= FOOD_TIMEOUT:
             self.snake1_death_reason = "food_timeout"
             snake1_died = True
 
-        # Move opponent snake (snake2) if it exists and snake1 hasn't died
-        if self.snake2 and not snake1_died:
+        # Process snake1's movement if it's not dead
+        if not self.snake1_death_reason:
+            # Check if the move is valid
+            if not self._is_valid_move(direction):
+                self.snake1_death_reason = "invalid_move"
+                snake1_died = True
+            else:
+                # Update snake1's direction and move
+                self.snake1.direction = direction
+                dx, dy = Direction.get_components(direction)
+                new_head = Point(self.snake1.body[0].x + dx, self.snake1.body[0].y + dy)
+
+                # Check for collisions with walls
+                if self.maze.is_wall(new_head.x, new_head.y):
+                    self.snake1_death_reason = "collision_wall"
+                    snake1_died = True
+                # Check for self-collision
+                elif new_head in self.snake1.body[1:]:
+                    self.snake1_death_reason = "collision_self"
+                    snake1_died = True
+                # Check for collision with opponent
+                elif self.snake2 and new_head in self.snake2.body:
+                    self.snake1_death_reason = "collision_opponent"
+                    snake1_died = True
+                else:
+                    # Move is safe, update snake position
+                    self.snake1.body.insert(0, new_head)
+
+                    # Check for food consumption
+                    if self.food and new_head == self.food.position:
+                        snake1_ate_food = True
+                        self.snake1.steps_since_last_food = 0
+                        self.food = None
+                        # Don't remove tail as snake grows
+                    else:
+                        self.snake1.body.pop()
+                        self.snake1.steps_since_last_food += 1
+
+                    # Check for powerup consumption
+                    if self.powerup and new_head == self.powerup.position:
+                        snake1_ate_powerup = True
+                        self.snake1.steps_since_last_food = 0  # Reset food timer
+                        self.snake1.score += 1  # Add score
+                        self.powerup = None
+
+        # Check for food timeout for snake2
+        if self.snake2 and not self.snake2_death_reason and self.snake2.steps_since_last_food >= FOOD_TIMEOUT:
+            snake2_died = True
+            self.snake2_death_reason = "food_timeout"
+
+        # Process snake2's movement if it's not dead
+        if self.snake2 and not self.snake2_death_reason:
             opponent_action = self._get_opponent_action()
             if opponent_action is not None:
                 opp_direction = Direction.INDEX_TO_DIR[opponent_action]
@@ -509,22 +513,23 @@ class SnakeEnv(gym.Env):
                     # Check if snake2 ate food
                     if self.food and new_head == self.food.position:
                         self.snake2.steps_since_last_food = 0
+                        self.snake2.score += 1  # Add score for food
                         self.food = None
+                    # Check if snake2 ate powerup
+                    elif self.powerup and new_head == self.powerup.position:
+                        self.snake2.steps_since_last_food = 0  # Reset food timer
+                        self.snake2.score += 1  # Add score
+                        self.powerup = None
                     else:
                         self.snake2.body.pop()
                         self.snake2.steps_since_last_food += 1
 
-                    # Check for food timeout for snake2
-                    if self.snake2.steps_since_last_food >= FOOD_TIMEOUT:
-                        snake2_died = True
-                        self.snake2_death_reason = "food_timeout"
-
-        # Spawn new food if needed and game isn't over
-        if self.food is None and not (snake1_died or snake2_died):
+        # Spawn new food if needed and at least one snake is still alive
+        if self.food is None and not (self.snake1_death_reason and self.snake2_death_reason):
             self.food = self._place_item(Food)
 
-        # Spawn new powerup with small probability if game isn't over
-        if self.powerup is None and random.random() < POWERUP_SPAWN_CHANCE and not (snake1_died or snake2_died):
+        # Spawn new powerup with small probability if at least one snake is still alive
+        if self.powerup is None and random.random() < POWERUP_SPAWN_CHANCE and not (self.snake1_death_reason and self.snake2_death_reason):
             self.powerup = self._place_item(PowerUp)
 
         # Update step counter
@@ -539,8 +544,14 @@ class SnakeEnv(gym.Env):
         # Calculate reward
         reward = self._get_reward(snake1_ate_food, snake1_ate_powerup, snake1_died, snake2_died, info)
 
-        # Check if episode is done (either snake dies)
-        done = snake1_died or snake2_died
+        # Update death reasons if needed
+        if snake1_died and not self.snake1_death_reason:
+            self.snake1_death_reason = info["snake1_death_reason"]
+        if snake2_died and not self.snake2_death_reason:
+            self.snake2_death_reason = info["snake2_death_reason"]
+
+        # Check if episode is done (both snakes must be dead)
+        done = self.snake1_death_reason and self.snake2_death_reason
 
         # Get valid actions mask for next step
         info["valid_actions"] = self._get_valid_actions_mask()

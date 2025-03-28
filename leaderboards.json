@@ -1,6 +1,48 @@
 {
   "maze_symmetric": [
     {
+      "date": "2025-03-28 22:02:54",
+      "winner": "P2",
+      "score": 2,
+      "snake1_score": 0,
+      "snake2_score": 2
+    },
+    {
+      "date": "2025-03-28 22:03:50",
+      "winner": "P2",
+      "score": 1,
+      "snake1_score": 0,
+      "snake2_score": 1
+    },
+    {
+      "date": "2025-03-28 22:12:13",
+      "winner": "P1",
+      "score": 1,
+      "snake1_score": 1,
+      "snake2_score": 0
+    },
+    {
+      "date": "2025-03-28 22:15:52",
+      "winner": "P2",
+      "score": 1,
+      "snake1_score": 0,
+      "snake2_score": 1
+    },
+    {
+      "date": "2025-03-28 22:17:51",
+      "winner": "P2",
+      "score": 1,
+      "snake1_score": 0,
+      "snake2_score": 1
+    },
+    {
+      "date": "2025-03-28 22:20:07",
+      "winner": "P2",
+      "score": 1,
+      "snake1_score": 0,
+      "snake2_score": 1
+    },
+    {
       "date": "2025-03-28 20:49:59",
       "winner": "Red",
       "score": 0,
@@ -27,51 +69,23 @@
       "score": 0,
       "snake1_score": 0,
       "snake2_score": 0
-    },
-    {
-      "date": "2025-03-28 21:25:07",
-      "winner": "P1",
-      "score": 0,
-      "snake1_score": 0,
-      "snake2_score": 0
-    },
-    {
-      "date": "2025-03-28 21:25:12",
-      "winner": "P1",
-      "score": 0,
-      "snake1_score": 0,
-      "snake2_score": 0
-    },
-    {
-      "date": "2025-03-28 21:27:07",
-      "winner": "P1",
-      "score": 0,
-      "snake1_score": 0,
-      "snake2_score": 0
-    },
-    {
-      "date": "2025-03-28 21:29:26",
-      "winner": "P1",
-      "score": 0,
-      "snake1_score": 0,
-      "snake2_score": 0
-    },
-    {
-      "date": "2025-03-28 21:32:09",
-      "winner": "P1",
-      "score": 0,
-      "snake1_score": 0,
-      "snake2_score": 0
-    },
-    {
-      "date": "2025-03-28 21:37:28",
-      "winner": "P1",
-      "score": 0,
-      "snake1_score": 0,
-      "snake2_score": 0
     }
   ],
   "maze_training": [
+    {
+      "date": "2025-03-28 22:06:59",
+      "winner": "P2",
+      "score": 1,
+      "snake1_score": 0,
+      "snake2_score": 1
+    },
+    {
+      "date": "2025-03-28 22:13:14",
+      "winner": "P2",
+      "score": 1,
+      "snake1_score": 0,
+      "snake2_score": 1
+    },
     {
       "date": "2025-03-28 21:25:18",
       "winner": "P1",
@@ -99,9 +113,44 @@
       "score": 0,
       "snake1_score": 0,
       "snake2_score": 0
+    },
+    {
+      "date": "2025-03-28 22:01:25",
+      "winner": "P1",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
+    },
+    {
+      "date": "2025-03-28 22:19:58",
+      "winner": "P1",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
     }
   ],
   "maze_natural": [
+    {
+      "date": "2025-03-28 22:13:29",
+      "winner": "P2",
+      "score": 3,
+      "snake1_score": 0,
+      "snake2_score": 3
+    },
+    {
+      "date": "2025-03-28 22:14:25",
+      "winner": "P1",
+      "score": 2,
+      "snake1_score": 2,
+      "snake2_score": 1
+    },
+    {
+      "date": "2025-03-28 22:04:00",
+      "winner": "P2",
+      "score": 1,
+      "snake1_score": 0,
+      "snake2_score": 1
+    },
     {
       "date": "2025-03-28 21:27:18",
       "winner": "P1",
@@ -122,11 +171,46 @@
       "score": 0,
       "snake1_score": 0,
       "snake2_score": 0
+    },
+    {
+      "date": "2025-03-28 21:58:53",
+      "winner": "P1",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
+    },
+    {
+      "date": "2025-03-28 22:01:38",
+      "winner": "P1",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
     }
   ],
   "maze_rooms": [
     {
+      "date": "2025-03-28 22:04:08",
+      "winner": "P2",
+      "score": 2,
+      "snake1_score": 0,
+      "snake2_score": 2
+    },
+    {
       "date": "2025-03-28 21:27:23",
+      "winner": "P1",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
+    },
+    {
+      "date": "2025-03-28 21:58:43",
+      "winner": "P1",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
+    },
+    {
+      "date": "2025-03-28 22:01:46",
       "winner": "P1",
       "score": 0,
       "snake1_score": 0,
