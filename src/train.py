@@ -6,10 +6,32 @@ from datetime import datetime
 from stable_baselines3 import PPO, DQN, A2C
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
-from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 
 from snake_env import SnakeEnv
 from constants import *
+
+class LearningRateScheduler(BaseCallback):
+    """Custom callback for dynamic learning rate adjustment"""
+    def __init__(self, initial_lr, min_lr=1e-5, decay_factor=0.5, decay_steps=100000, verbose=0):
+        super().__init__(verbose)
+        self.initial_lr = initial_lr
+        self.min_lr = min_lr
+        self.decay_factor = decay_factor
+        self.decay_steps = decay_steps
+
+    def _on_step(self):
+        # Calculate new learning rate
+        progress = self.num_timesteps / self.model.total_timesteps
+        decay_progress = min(1.0, self.num_timesteps / self.decay_steps)
+        new_lr = max(
+            self.min_lr,
+            self.initial_lr * (1.0 - decay_progress * self.decay_factor)
+        )
+
+        # Update the learning rate
+        self.model.learning_rate = new_lr
+        return True
 
 class ExperimentConfig:
     def __init__(self,
@@ -20,6 +42,9 @@ class ExperimentConfig:
                  n_envs=1,
                  opponent_policy='basic_follow',
                  learning_rate=3e-4,
+                 min_learning_rate=1e-5,
+                 lr_decay_factor=0.5,
+                 lr_decay_steps=400000,
                  batch_size=128,
                  net_arch=[256, 256, 128],
                  buffer_size=100_000,
@@ -38,6 +63,9 @@ class ExperimentConfig:
         self.n_envs = n_envs
         self.opponent_policy = opponent_policy
         self.learning_rate = learning_rate
+        self.min_learning_rate = min_learning_rate
+        self.lr_decay_factor = lr_decay_factor
+        self.lr_decay_steps = lr_decay_steps
         self.batch_size = batch_size
         self.net_arch = net_arch
         self.buffer_size = buffer_size
@@ -140,18 +168,31 @@ def train_agent(config):
     else:
         raise ValueError(f"Unsupported algorithm: {config.algorithm}")
 
-    # Setup checkpoint callback
+    # Setup callbacks
+    callbacks = []
+
+    # Checkpoint callback
     checkpoint_callback = CheckpointCallback(
         save_freq=max(50000 // config.n_envs, 1000),
         save_path=os.path.join(run_dir, "checkpoints"),
         name_prefix="model"
     )
+    callbacks.append(checkpoint_callback)
+
+    # Learning rate scheduler callback
+    lr_scheduler = LearningRateScheduler(
+        initial_lr=config.learning_rate,
+        min_lr=config.min_learning_rate,
+        decay_factor=config.lr_decay_factor,
+        decay_steps=config.lr_decay_steps
+    )
+    callbacks.append(lr_scheduler)
 
     # Train the model
     try:
         model.learn(
             total_timesteps=config.total_timesteps,
-            callback=checkpoint_callback,
+            callback=callbacks,
             progress_bar=True
         )
     except Exception as e:
@@ -185,12 +226,16 @@ def train_agent(config):
 if __name__ == '__main__':
     # Example configurations for different experiments
     configs = [
-        # Baseline configuration
+        # Baseline configuration with learning rate decay
         ExperimentConfig(
-            run_name="baseline_dqn",
+            run_name="dqn_with_lr_decay",
             algorithm="DQN",
             approach_num=2,
-            total_timesteps=1_500_000
+            total_timesteps=1_500_000,
+            learning_rate=3e-4,
+            min_learning_rate=5e-5,
+            lr_decay_factor=0.5,
+            lr_decay_steps=400000  # Start decay after this many steps
         ),
 
         # Faster learning configuration
@@ -200,16 +245,23 @@ if __name__ == '__main__':
             approach_num=2,
             total_timesteps=1_500_000,
             learning_rate=1e-3,
+            min_learning_rate=1e-4,
+            lr_decay_factor=0.6,
+            lr_decay_steps=300000,
             batch_size=256,
             exploration_fraction=0.3
         ),
 
         # PPO configuration
         ExperimentConfig(
-            run_name="ppo_baseline",
+            run_name="ppo_with_lr_decay",
             algorithm="PPO",
             approach_num=2,
             total_timesteps=1_000_000,
+            learning_rate=3e-4,
+            min_learning_rate=5e-5,
+            lr_decay_factor=0.5,
+            lr_decay_steps=300000,
             net_arch=[128, 128]
         )
     ]
