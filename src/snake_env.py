@@ -241,7 +241,7 @@ class SnakeEnv(gym.Env):
             selected_maze = random.choice(maze_files)
             self.maze = Maze(os.path.join("mazes", selected_maze))
             if MAZE_ROTATION and random.random() < 0.5:
-                self.maze.rotate_90()
+                self.maze.rotate_180()
 
         # Place snakes (ensure they don't start on walls or overlap)
         while True:

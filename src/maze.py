@@ -14,6 +14,13 @@ class Maze:
             # Optional: Add basic boundary walls even if no file
             # self._add_boundary_walls()
 
+    @property
+    def width(self):
+        return GRID_WIDTH
+
+    @property
+    def height(self):
+        return GRID_HEIGHT
 
     def load_maze(self, filepath):
         try:
@@ -66,19 +73,19 @@ class Maze:
             if 0 <= x < GRID_WIDTH and 0 <= y < GRID_HEIGHT:
                 pygame.draw.rect(screen, GRAY, (x * block_size, y * block_size, block_size, block_size))
 
-    def rotate_90(self):
-        """Rotate the maze 90 degrees clockwise."""
+    def rotate_180(self):
+        """Rotate the maze 180 degrees."""
         # Create a new rotated grid
         new_grid = [[EMPTY for _ in range(GRID_WIDTH)] for _ in range(GRID_HEIGHT)]
         new_barriers = set()
 
         # Rotate each barrier point
         for (x, y) in self.barriers:
-            # For 90-degree clockwise rotation:
-            # new_x = y
-            # new_y = GRID_WIDTH - 1 - x
-            new_x = y
-            new_y = GRID_WIDTH - 1 - x
+            # For 180-degree rotation:
+            # new_x = GRID_WIDTH - 1 - x
+            # new_y = GRID_HEIGHT - 1 - y
+            new_x = GRID_WIDTH - 1 - x
+            new_y = GRID_HEIGHT - 1 - y
             if 0 <= new_x < GRID_WIDTH and 0 <= new_y < GRID_HEIGHT:
                 new_barriers.add((new_x, new_y))
                 new_grid[new_y][new_x] = WALL
