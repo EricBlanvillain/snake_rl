@@ -4,9 +4,10 @@ class Button:
     def __init__(self, x, y, width, height, text, color=(100, 100, 100), hover_color=(150, 150, 150), text_color=(255, 255, 255)):
         self.rect = pygame.Rect(x, y, width, height)
         self.text = text
-        self.color = color
-        self.hover_color = hover_color
-        self.text_color = text_color
+        # Ensure color values are valid integers
+        self.color = tuple(max(0, min(255, int(c))) for c in color)
+        self.hover_color = tuple(max(0, min(255, int(c))) for c in hover_color)
+        self.text_color = tuple(max(0, min(255, int(c))) for c in text_color)
         self.font = pygame.font.SysFont('arial', 24)  # Default font
         self.is_hovered = False
         self.glow_amount = 0
@@ -48,11 +49,11 @@ class Button:
         elif self.glow_amount <= 0.0:
             self.glow_direction = 1
 
-        # Update glow color based on glow_amount
+        # Update glow color based on glow_amount, ensuring integer values
         glow_color = (
-            min(self.color[0] + 30 * self.glow_amount, 255),
-            min(self.color[1] + 30 * self.glow_amount, 255),
-            min(self.color[2] + 30 * self.glow_amount, 255)
+            int(min(self.color[0] + 30 * self.glow_amount, 255)),
+            int(min(self.color[1] + 30 * self.glow_amount, 255)),
+            int(min(self.color[2] + 30 * self.glow_amount, 255))
         )
         self.hover_color = glow_color
 

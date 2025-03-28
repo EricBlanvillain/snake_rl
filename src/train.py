@@ -86,7 +86,7 @@ class ExperimentConfig:
     def __init__(self,
                  run_name,
                  algorithm='DQN',
-                 approach_num=2,
+                 approach_num="A2",
                  total_timesteps=1_500_000,
                  n_envs=1,
                  opponent_policy='basic_follow',
@@ -283,7 +283,7 @@ if __name__ == '__main__':
     config = ExperimentConfig(
         run_name="diverse_mazes_dqn",
         algorithm="DQN",
-        approach_num=2,  # Using the sophisticated reward structure
+        approach_num="A2",
         total_timesteps=2_000_000,  # Increased timesteps for better maze exploration
         n_envs=1,
         opponent_policy='basic_follow',

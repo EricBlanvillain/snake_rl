@@ -13,7 +13,14 @@ from game_elements import Point, Direction, Snake, Food, PowerUp
 class SnakeEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": GAME_SPEED}
 
-    def __init__(self, render_mode=None, maze_file="mazes/maze_natural.txt", reward_approach=1, opponent_policy='stay_still'):
+    def __init__(self, render_mode=None, maze_file="mazes/maze_natural.txt", reward_approach="A2", opponent_policy='stay_still'):
+        """Initialize the snake environment.
+        Args:
+            render_mode: How to render the environment ('human' or 'rgb_array')
+            maze_file: Path to the maze file to use
+            reward_approach: Which reward structure to use ("A2" for sophisticated rewards)
+            opponent_policy: Policy for the opponent snake
+        """
         super().__init__()
 
         self.grid_width = GRID_WIDTH
@@ -87,7 +94,7 @@ class SnakeEnv(gym.Env):
     def _get_reward(self, snake1_ate_food, snake1_ate_powerup, snake1_died, snake2_died, info):
         reward = 0.0
 
-        if self.reward_approach == "A2":
+        if self.reward_approach == "A2":  # Using string comparison for reward approach
             # If snake1 is already dead or just died, return appropriate reward
             if self.snake1_death_reason or snake1_died:
                 # Only give death penalty once when snake actually dies
@@ -124,7 +131,7 @@ class SnakeEnv(gym.Env):
             if self._current_step > self._median_episode_length:
                 reward += REWARD_SURVIVAL_BONUS
         else:
-            raise ValueError(f"Unknown reward approach: {self.reward_approach}")
+            raise ValueError(f"Unknown reward approach: {self.reward_approach}. Currently only 'A2' is supported.")
 
         return reward
 
@@ -375,6 +382,11 @@ class SnakeEnv(gym.Env):
         valid_actions_mask = self._get_valid_actions_mask(for_snake2=True)
         valid_indices = [i for i, is_valid in enumerate(valid_actions_mask) if is_valid]
 
+        # If there are no valid actions, mark snake2 as dead and return None
+        if not valid_indices:
+            self.snake2_death_reason = "no_valid_moves"
+            return None
+
         if self.opponent_policy_type == 'stay_still':
             # Try to maintain current direction if valid
             try:
@@ -523,6 +535,9 @@ class SnakeEnv(gym.Env):
                     else:
                         self.snake2.body.pop()
                         self.snake2.steps_since_last_food += 1
+            elif not self.snake2_death_reason:  # opponent_action is None but snake2 isn't marked as dead
+                snake2_died = True  # Mark snake2 as dead if it has no valid moves
+                self.snake2_death_reason = "no_valid_moves"
 
         # Spawn new food if needed and at least one snake is still alive
         if self.food is None and not (self.snake1_death_reason and self.snake2_death_reason):
