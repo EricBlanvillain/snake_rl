@@ -1,0 +1,117 @@
+{
+  "maze_symmetric": [
+    {
+      "date": "2025-03-28 20:49:59",
+      "winner": "Red",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
+    },
+    {
+      "date": "2025-03-28 20:51:45",
+      "winner": "Red",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
+    },
+    {
+      "date": "2025-03-28 20:53:53",
+      "winner": "Red",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
+    },
+    {
+      "date": "2025-03-28 20:56:55",
+      "winner": "P2",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
+    },
+    {
+      "date": "2025-03-28 21:25:07",
+      "winner": "P1",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
+    },
+    {
+      "date": "2025-03-28 21:25:12",
+      "winner": "P1",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
+    },
+    {
+      "date": "2025-03-28 21:27:07",
+      "winner": "P1",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
+    },
+    {
+      "date": "2025-03-28 21:29:26",
+      "winner": "P1",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
+    },
+    {
+      "date": "2025-03-28 21:32:09",
+      "winner": "P1",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
+    },
+    {
+      "date": "2025-03-28 21:37:28",
+      "winner": "P1",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
+    }
+  ],
+  "maze_training": [
+    {
+      "date": "2025-03-28 21:25:18",
+      "winner": "P1",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
+    },
+    {
+      "date": "2025-03-28 21:25:21",
+      "winner": "P1",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
+    },
+    {
+      "date": "2025-03-28 21:27:13",
+      "winner": "P1",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
+    }
+  ],
+  "maze_natural": [
+    {
+      "date": "2025-03-28 21:27:18",
+      "winner": "P1",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
+    }
+  ],
+  "maze_rooms": [
+    {
+      "date": "2025-03-28 21:27:23",
+      "winner": "P1",
+      "score": 0,
+      "snake1_score": 0,
+      "snake2_score": 0
+    }
+  ],
+  "maze_spiral": [],
+  "maze_arena": []
+}

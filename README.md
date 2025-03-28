@@ -1,13 +1,16 @@
 # Snake Reinforcement Learning
 
-A Python implementation of the classic Snake game with a reinforcement learning agent. The agent learns to play Snake using Deep Q-Learning (DQN) in various maze environments.
+A Python implementation of the classic Snake game with a reinforcement learning agent. The agent learns to play Snake using Deep Q-Learning (DQN) in various maze environments, featuring a retro-punk visual style and two-player mode.
 
 ## Project Overview
 
 This project implements:
-- A customizable Snake game environment
+- A customizable Snake game environment with retro-punk visuals
 - Deep Q-Learning (DQN) agent for training
 - Support for multiple maze configurations
+- Two-player mode with AI opponent
+- Interactive pause menu and game controls
+- Leaderboard system
 - TensorBoard integration for training visualization
 - Evaluation tools for trained models
 
@@ -34,7 +37,11 @@ snake_rl/
 │   ├── train.py          # Training script for DQN agent
 │   ├── evaluate.py       # Evaluation script for models
 │   ├── constants.py      # Configuration parameters
-│   └── maze.py          # Maze generation and handling
+│   ├── maze.py          # Maze generation and handling
+│   ├── visualize.py     # Game visualization and UI
+│   ├── button.py        # UI button components
+│   ├── menu.py          # Game menus
+│   └── leaderboard.py   # Leaderboard system
 ├── mazes/                 # Maze configuration files
 │   ├── default.txt       # Default empty maze
 │   ├── maze1.txt        # Various maze layouts
@@ -46,6 +53,27 @@ snake_rl/
 ├── LICENSE              # MIT License
 └── CONTRIBUTING.md      # Contributing guidelines
 ```
+
+## Game Features
+
+### Controls
+- **Spacebar/ESC**: Pause/Unpause game
+- **L**: Toggle leaderboard (when game is over)
+- **M**: Open maze selection menu
+- Mouse control for menu navigation
+
+### Game Modes
+- Single player vs AI opponent
+- Multiple AI difficulty levels for opponent
+- Various maze layouts to choose from
+
+### Visual Features
+- Retro-punk aesthetic with neon effects
+- Dynamic score display
+- Death messages and game over screen
+- Interactive pause menu
+- Maze selection interface
+- Leaderboard display
 
 ## Training
 
@@ -59,6 +87,7 @@ The training process includes:
 - Automatic checkpoint saving
 - TensorBoard logging
 - Multiple training runs support
+- Customizable reward structures
 
 Training metrics are saved in the `runs/` directory and can be visualized using TensorBoard:
 
@@ -74,6 +103,12 @@ To evaluate a trained model:
 python src/evaluate.py
 ```
 
+The evaluation includes:
+- Performance metrics
+- Visualization of agent behavior
+- Score tracking
+- Death reason analysis
+
 ## Configuration
 
 Key parameters can be adjusted in `src/constants.py`:
@@ -83,6 +118,8 @@ Key parameters can be adjusted in `src/constants.py`:
 - Network architecture
 - Reward structure
 - Training episodes
+- Game speed and visual settings
+- Opponent AI behavior
 
 ## Maze Configuration
 
@@ -98,6 +135,7 @@ The agent typically learns to:
 - Collect food efficiently
 - Avoid collisions with walls and itself
 - Develop strategies for different maze layouts
+- Compete effectively against the opponent snake
 
 ## Contributing
 

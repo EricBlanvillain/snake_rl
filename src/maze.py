@@ -7,9 +7,13 @@ class Maze:
     def __init__(self, filepath=None):
         self.grid = [[EMPTY for _ in range(GRID_WIDTH)] for _ in range(GRID_HEIGHT)]
         self.barriers = set()
+<<<<<<< HEAD
         self.filepath = filepath
         self.is_loaded = False  # Track if maze was loaded successfully
 
+=======
+        self.maze_file = filepath  # Store the maze file path
+>>>>>>> 4264bc1 (Added pause menu, improved snake controls, and enhanced visuals)
         if filepath and os.path.exists(filepath):
             self.load_maze(filepath)
         else:
@@ -28,11 +32,15 @@ class Maze:
     def load_maze(self, filepath):
         """Load maze from file and return success status"""
         try:
+<<<<<<< HEAD
             if not os.path.exists(filepath):
                 print(f"Error: Maze file '{filepath}' does not exist")
                 self.is_loaded = False
                 return False
 
+=======
+            self.maze_file = filepath  # Update the maze file path
+>>>>>>> 4264bc1 (Added pause menu, improved snake controls, and enhanced visuals)
             with open(filepath, 'r') as f:
                 lines = f.readlines()
                 if not lines:

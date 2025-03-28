@@ -5,28 +5,19 @@ import time
 import numpy as np
 from stable_baselines3 import PPO, DQN, A2C
 import sys
+import json
+import random
 
 from snake_env import SnakeEnv, Direction, Point
 from constants import *
 from menu import Menu
 from button import Button
+from leaderboard import Leaderboard
 
 # Constants for visualization
 CELL_SIZE = 30
 GRID_LINE_WIDTH = 1
 FPS = 15
-
-# Retro punk color scheme
-COLORS = {
-    'background': (0, 0, 20),      # Dark blue background
-    'grid': (40, 40, 60),         # Subtle grid lines
-    'snake1': (0, 255, 100),      # Neon green for snake 1
-    'snake2': (255, 50, 50),      # Neon red for snake 2
-    'food': (255, 255, 0),        # Yellow food
-    'wall': (100, 0, 255),        # Purple walls
-    'text': (0, 255, 200),        # Cyan text
-    'score': (255, 50, 150)       # Pink score
-}
 
 class RetroVisualizer:
     def __init__(self, env, model1=None, model2=None):
@@ -42,11 +33,23 @@ class RetroVisualizer:
         self.menu = None
         self.pause_buttons = []
         self.death_reason = ""
-        self.death_display_time = 0
+        self.death_display_time = None
+        self.show_leaderboard = False
+        self.leaderboard = Leaderboard()
+        self._score_recorded = False
+        self.game_over = False
+
+        # Get maze name safely
+        if hasattr(self.env.maze, 'maze_file') and self.env.maze.maze_file:
+            self.current_maze_name = os.path.splitext(os.path.basename(self.env.maze.maze_file))[0]
+        else:
+            self.current_maze_name = "default_maze"
+
         self.death_messages = {
             "collision_wall": "Hit a wall!",
             "collision_self": "Self collision!",
             "collision_opponent": "Hit opponent snake!",
+            "food_timeout": "Starved!",
             "collision_opponent_head": "Head-on collision!",
             "collision_opponent_body": "Hit opponent's body!"
         }
@@ -117,11 +120,9 @@ class RetroVisualizer:
 
     def draw_score(self):
         """Draw score, episode info, and death reason with retro style."""
-        score_text = f"Score: {self.env.snake1.score if self.env.snake1 else 0}"
-        if self.env.snake2:
-            score_text += f" vs {self.env.snake2.score}"
-        episode_text = f"Episode: {self.episode}"
-        steps_text = f"Steps: {self.steps}"
+        # Safely get snake scores
+        snake1_score = self.env.snake1.score if self.env.snake1 else 0
+        snake2_score = self.env.snake2.score if self.env.snake2 else 0
 
         # Create shaded background for text
         text_bg = pygame.Surface((self.screen_width, 60))
@@ -129,11 +130,11 @@ class RetroVisualizer:
         text_bg.set_alpha(200)
         self.screen.blit(text_bg, (0, self.screen_height - 60))
 
-        # Render text with glow effect
-        score_surf = self.font.render(score_text, True, COLORS['score'])
-        episode_surf = self.font.render(episode_text, True, COLORS['text'])
-        steps_surf = self.font.render(steps_text, True, COLORS['text'])
+        # Render scores with larger font and glow effect
+        score_font = pygame.font.SysFont('arial', 32)  # Larger font for scores
+        info_font = pygame.font.SysFont('arial', 24)   # Regular font for other info
 
+<<<<<<< HEAD
         # Get current maze name and create subtle text
         maze_name = os.path.basename(self.env.maze.filepath) if hasattr(self.env.maze, 'filepath') else "Unknown Maze"
         maze_font = pygame.font.SysFont('arial', 18)  # Smaller font for subtlety
@@ -145,47 +146,115 @@ class RetroVisualizer:
         self.screen.blit(episode_surf, (self.screen_width//2 - episode_surf.get_width()//2, self.screen_height - 55))
         self.screen.blit(steps_surf, (self.screen_width - steps_surf.get_width() - 10, self.screen_height - 55))
         self.screen.blit(maze_text, (self.screen_width//2 - maze_text.get_width()//2, self.screen_height - 25))  # Position at bottom
+=======
+        # Snake 1 score with glow
+        score1_text = f"P1: {snake1_score}"
+        score1_surf = score_font.render(score1_text, True, COLORS['snake1'])
+        # Add glow effect
+        glow_surf = pygame.Surface((score1_surf.get_width() + 10, score1_surf.get_height() + 10), pygame.SRCALPHA)
+        glow_surf.blit(score1_surf, (5, 5))
+        glow_surf.set_alpha(100)
+        self.screen.blit(glow_surf, (5, self.screen_height - 55))
+        self.screen.blit(score1_surf, (10, self.screen_height - 50))
 
-        # Draw death messages if snakes have died and haven't timed out (5 seconds)
-        current_time = time.time()
-        if current_time - self.death_display_time < 5:
+        # Snake 2 score with glow
+        score2_text = f"P2: {snake2_score}"
+        score2_surf = score_font.render(score2_text, True, COLORS['snake2'])
+        # Add glow effect
+        glow_surf = pygame.Surface((score2_surf.get_width() + 10, score2_surf.get_height() + 10), pygame.SRCALPHA)
+        glow_surf.blit(score2_surf, (5, 5))
+        glow_surf.set_alpha(100)
+        self.screen.blit(glow_surf, (self.screen_width - score2_surf.get_width() - 15, self.screen_height - 55))
+        self.screen.blit(score2_surf, (self.screen_width - score2_surf.get_width() - 10, self.screen_height - 50))
+
+        # Episode and steps info
+        episode_text = f"Episode: {self.episode}"
+        steps_text = f"Steps: {self.steps}"
+        episode_surf = info_font.render(episode_text, True, COLORS['text'])
+        steps_surf = info_font.render(steps_text, True, COLORS['text'])
+
+        # Center episode and steps info
+        self.screen.blit(episode_surf, (self.screen_width//2 - episode_surf.get_width()//2, self.screen_height - 55))
+        self.screen.blit(steps_surf, (self.screen_width//2 - steps_surf.get_width()//2, self.screen_height - 30))
+>>>>>>> 4264bc1 (Added pause menu, improved snake controls, and enhanced visuals)
+
+        # Draw death messages and update leaderboard if snakes have died
+        if (hasattr(self.env, 'snake1_death_reason') and self.env.snake1_death_reason) or \
+           (hasattr(self.env, 'snake2_death_reason') and self.env.snake2_death_reason):
+
+            # Determine winner and update leaderboard
+            if not hasattr(self, '_score_recorded') or not self._score_recorded:
+                if snake1_score > snake2_score:
+                    winner_color = COLORS['snake1']
+                    total_score = snake1_score
+                elif snake2_score > snake1_score:
+                    winner_color = COLORS['snake2']
+                    total_score = snake2_score
+                else:  # In case of a tie, give it to P1
+                    winner_color = COLORS['snake1']
+                    total_score = snake1_score
+
+                self.leaderboard.add_score(
+                    self.current_maze_name,
+                    winner_color,
+                    total_score,
+                    snake1_score,
+                    snake2_score
+                )
+                self._score_recorded = True
+
+            # Create a semi-transparent background for death messages
             messages = []
-
-            # Get death messages for both snakes if they exist
-            if hasattr(self.env, 'snake1_death_reason') and self.env.snake1_death_reason:
+            if self.env.snake1_death_reason:
                 message1 = self.death_messages.get(self.env.snake1_death_reason, self.env.snake1_death_reason)
                 messages.append(f"Snake 1: {message1}")
-
-            if hasattr(self.env, 'snake2_death_reason') and self.env.snake2_death_reason:
+            if self.env.snake2_death_reason:
                 message2 = self.death_messages.get(self.env.snake2_death_reason, self.env.snake2_death_reason)
                 messages.append(f"Snake 2: {message2}")
 
             if messages:
-                # Create a semi-transparent background for death messages
-                total_height = len(messages) * 30 + 10  # 30 pixels per message + padding
+                total_height = len(messages) * 30 + 140  # Extra height for buttons
                 msg_bg = pygame.Surface((self.screen_width - 40, total_height))
                 msg_bg.fill((0, 0, 0))
                 msg_bg.set_alpha(180)
 
-                # Position in center of screen
                 msg_y = self.screen_height//2 - total_height//2
                 self.screen.blit(msg_bg, (20, msg_y))
 
-                # Draw each message
                 for i, message in enumerate(messages):
                     death_surf = self.font.render(message, True, (255, 50, 50))
                     msg_x = self.screen_width//2 - death_surf.get_width()//2
-
-                    # Add glow effect for each message
-                    glow_surf = pygame.Surface((death_surf.get_width() + 20, death_surf.get_height() + 20), pygame.SRCALPHA)
-                    temp_surf = self.font.render(message, True, (255, 50, 50))
-                    temp_surf.set_alpha(50)
-                    glow_rect = temp_surf.get_rect(center=(glow_surf.get_width()//2, glow_surf.get_height()//2))
-                    for offset in range(5, 0, -1):
-                        glow_surf.blit(temp_surf, glow_rect.inflate(offset*2, offset*2))
-
-                    self.screen.blit(glow_surf, (msg_x - 10, msg_y + i * 30))
                     self.screen.blit(death_surf, (msg_x, msg_y + i * 30))
+
+                # Add buttons
+                button_width = 200
+                button_height = 40
+                button_spacing = 20
+                button_x = self.screen_width//2 - button_width//2
+                button_y = msg_y + len(messages) * 30 + 20
+
+                # Return to Menu button
+                pygame.draw.rect(self.screen, COLORS['text'], (button_x, button_y, button_width, button_height))
+                pygame.draw.rect(self.screen, COLORS['background'], (button_x + 2, button_y + 2, button_width - 4, button_height - 4))
+                button_text = self.font.render("Return to Menu", True, COLORS['text'])
+                text_x = button_x + (button_width - button_text.get_width())//2
+                text_y = button_y + (button_height - button_text.get_height())//2
+                self.screen.blit(button_text, (text_x, text_y))
+                self.return_button_rect = pygame.Rect(button_x, button_y, button_width, button_height)
+
+                # Select Maze button
+                button_y += button_height + button_spacing
+                pygame.draw.rect(self.screen, COLORS['text'], (button_x, button_y, button_width, button_height))
+                pygame.draw.rect(self.screen, COLORS['background'], (button_x + 2, button_y + 2, button_width - 4, button_height - 4))
+                button_text = self.font.render("Select Maze", True, COLORS['text'])
+                text_x = button_x + (button_width - button_text.get_width())//2
+                text_y = button_y + (button_height - button_text.get_height())//2
+                self.screen.blit(button_text, (text_x, text_y))
+                self.select_maze_button_rect = pygame.Rect(button_x, button_y, button_width, button_height)
+
+        # Draw leaderboard if showing
+        if self.show_leaderboard:
+            self.leaderboard.render(self.screen, self.current_maze_name, self.font)
 
     def draw_pause_menu(self):
         """Draw the pause menu with retro punk styling."""
@@ -214,32 +283,59 @@ class RetroVisualizer:
 
         # Draw buttons
         for button in self.pause_buttons:
-            button.draw(self.screen, self.font)
+            button.draw(self.screen)
 
     def render(self):
         """Render the current game state."""
         self.screen.fill(COLORS['background'])
         self.draw_grid()
 
-        # Draw walls
-        for wall in self.env.maze.barriers:
-            self.draw_cell(wall[0], wall[1], COLORS['wall'])
-
-        # Draw food with glow
-        if self.env.food:
+        # Draw game elements
+        if self.env.food and hasattr(self.env.food, 'position'):
             self.draw_cell(self.env.food.position.x, self.env.food.position.y, COLORS['food'], glow=True)
+        if self.env.powerup and hasattr(self.env.powerup, 'position'):
+            self.draw_cell(self.env.powerup.position.x, self.env.powerup.position.y, (0, 200, 255), glow=True)
 
-        # Draw snakes
-        if self.env.snake1:
-            self.draw_snake(self.env.snake1, COLORS['snake1'])
-        if self.env.snake2:
+        # Draw snakes only if they exist and have bodies
+        if self.env.snake2 and hasattr(self.env.snake2, 'body'):
             self.draw_snake(self.env.snake2, COLORS['snake2'])
+        if self.env.snake1 and hasattr(self.env.snake1, 'body'):
+            self.draw_snake(self.env.snake1, COLORS['snake1'])
 
+        # Draw walls
+        if hasattr(self.env.maze, 'barriers'):
+            for wall in self.env.maze.barriers:
+                self.draw_cell(wall[0], wall[1], COLORS['wall'])
+
+        # Draw UI elements
         self.draw_score()
+
+        if self.paused:
+            self.draw_pause_menu()
+
         pygame.display.flip()
+
+    def render_pause_menu(self):
+        """Render the pause menu overlay."""
+        # Create a semi-transparent overlay
+        overlay = pygame.Surface((self.screen_width, self.screen_height))
+        overlay.set_alpha(128)
+        overlay.fill((0, 0, 0))
+        self.screen.blit(overlay, (0, 0))
+
+        # Draw "PAUSED" text
+        font = pygame.font.SysFont('arial', 48)
+        text = font.render('PAUSED', True, (255, 255, 255))
+        text_rect = text.get_rect(center=(self.screen_width//2, self.screen_height//2 - 120))
+        self.screen.blit(text, text_rect)
+
+        # Draw buttons
+        for button in self.pause_buttons:
+            button.draw(self.screen)
 
     def run(self, num_episodes=1):
         """Run the visualization for a specified number of episodes."""
+<<<<<<< HEAD
         menu = self.menu  # Use the existing menu instance
 
         while True:
@@ -274,66 +370,133 @@ class RetroVisualizer:
                             pause_screen_needs_update = True
 
                     # Handle pause menu buttons only if paused
+=======
+        running = True
+        self._score_recorded = False
+        self.game_over = False
+        action = 0  # Default action
+
+        # Ensure environment is properly initialized
+        obs, _ = self.env.reset()
+        print("Initial observation shape:", np.array(obs).shape)
+
+        while running and self.episode < num_episodes:
+            self.clock.tick(FPS)
+
+            # Handle events
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_SPACE:  # Spacebar toggles pause
+                        self.paused = not self.paused
+                    elif event.key == pygame.K_ESCAPE:
+                        self.paused = not self.paused
+                    elif event.key == pygame.K_l:  # 'L' key toggles leaderboard
+                        if self.game_over:  # Only allow toggling leaderboard when game is over
+                            self.show_leaderboard = not self.show_leaderboard
+                    elif event.key == pygame.K_m:  # 'M' key for maze selection
+                        self.show_maze_selection()
+
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    mouse_pos = pygame.mouse.get_pos()
+>>>>>>> 4264bc1 (Added pause menu, improved snake controls, and enhanced visuals)
                     if self.paused:
                         for button in self.pause_buttons:
-                            if button.handle_event(event):
+                            if button.is_clicked(mouse_pos):
                                 if button.text == "Resume":
                                     self.paused = False
-                                    pause_screen_needs_update = False
                                 elif button.text == "Select Maze":
-                                    return_to_maze_select = True
-                                    done = True
-                                    break
+                                    self.show_maze_selection()
                                 elif button.text == "Quit":
-                                    pygame.quit()
-                                    return
-                        # Mouse movement should trigger a pause screen update
-                        if event.type in (pygame.MOUSEMOTION, pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
-                            pause_screen_needs_update = True
+                                    running = False
+                    elif self.game_over:
+                        if hasattr(self, 'return_button_rect') and self.return_button_rect.collidepoint(mouse_pos):
+                            self.show_maze_selection()
+                        elif hasattr(self, 'select_maze_button_rect') and self.select_maze_button_rect.collidepoint(mouse_pos):
+                            self.show_maze_selection()
 
-                if return_to_maze_select:
-                    break
+            if not self.paused and not self.show_leaderboard and not self.game_over:
+                try:
+                    # Get action from model for snake 1
+                    if self.model1:
+                        # Convert observation to numpy array and ensure correct shape
+                        obs_array = np.array(obs, dtype=np.float32)
 
-                if self.paused:
-                    # Only render pause screen if it needs updating
-                    if pause_screen_needs_update:
-                        self.render()
-                        self.draw_pause_menu()
-                        pygame.display.flip()
-                        pause_screen_needs_update = False
-                    continue
+                        # Debug observation
+                        print("Raw observation shape:", obs_array.shape)
+                        print("Raw observation range:", obs_array.min(), "-", obs_array.max())
 
-                # Game logic when not paused
-                action1 = self.model1.predict(self.env._get_obs(), deterministic=True)[0] if self.model1 else 0
+                        # Normalize observation if needed
+                        if obs_array.max() > 1.0:
+                            obs_array = obs_array / max(SNAKE1_HEAD, SNAKE1_BODY, SNAKE2_HEAD, SNAKE2_BODY)
 
-                if self.model2:
-                    obs2 = self.env._get_obs()
-                    action2 = self.model2.predict(obs2, deterministic=True)[0]
-                    obs, reward, terminated, truncated, info = self.env.step((action1, action2))
-                    done = terminated or truncated
+                        # Ensure correct shape
+                        if obs_array.shape != (296,):
+                            print(f"Reshaping observation from {obs_array.shape} to (296,)")
+                            if len(obs_array.flatten()) < 296:
+                                obs_array = np.pad(obs_array.flatten(), (0, 296 - len(obs_array.flatten())), mode='constant')
+                            else:
+                                obs_array = obs_array.flatten()[:296]
 
-                    # Update death reasons for both snakes
-                    if info.get("snake1_died", False):
-                        self.death_reason = info.get("snake1_death_reason", "Unknown")
+                        # Get valid actions mask
+                        valid_actions = self.env._get_valid_actions_mask()
+                        print("Valid actions:", valid_actions)
+
+                        try:
+                            # Get model prediction
+                            action, _ = self.model1.predict(obs_array, deterministic=True)
+                            print("Model predicted action:", action)
+
+                            # Validate and clip action
+                            action = int(np.clip(action, 0, 3))
+
+                            # If predicted action is invalid and we have valid alternatives, choose a valid one
+                            if not valid_actions[action] and any(valid_actions):
+                                print(f"Invalid action {action}, choosing from valid actions")
+                                valid_indices = [i for i, is_valid in enumerate(valid_actions) if is_valid]
+                                action = random.choice(valid_indices)
+                                print("Chose alternative action:", action)
+
+                        except Exception as e:
+                            print(f"Error in model prediction: {e}")
+                            # Choose random valid action as fallback
+                            valid_indices = [i for i, is_valid in enumerate(valid_actions) if is_valid]
+                            action = random.choice(valid_indices) if valid_indices else 0
+                            print("Using fallback action:", action)
+
+                    # Step the environment with the validated action
+                    obs, reward, terminated, truncated, info = self.env.step(action)
+                    print(f"Step result - Action: {action}, Reward: {reward}, Terminated: {terminated}")
+
+                    if info.get("snake1_death_reason"):
+                        print("Death reason:", info["snake1_death_reason"])
+
+                    self.steps += 1
+
+                    # Check for game over conditions
+                    if terminated or truncated:
+                        print("Game over detected")
                         self.death_display_time = time.time()
-                    if info.get("snake2_died", False):
-                        self.death_reason = info.get("snake2_death_reason", "Unknown")
-                        self.death_display_time = time.time()
-                else:
-                    obs, reward, terminated, truncated, info = self.env.step(action1)
-                    done = terminated or truncated
-                    if info.get("snake1_died", False):
-                        self.death_reason = info.get("snake1_death_reason", "Unknown")
-                        self.death_display_time = time.time()
+                        self.game_over = True
+                        if self.episode + 1 < num_episodes:
+                            print("Starting new episode")
+                            self.episode += 1
+                            obs, _ = self.env.reset()
+                            self.steps = 0
+                            self.game_over = False
+                            self._score_recorded = False
 
-                self.steps += 1
-                self.render()
-                pygame.display.flip()
+                except Exception as e:
+                    print(f"Critical error during game step: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    self.game_over = True
 
-                # If both snakes are dead, show the death message for a moment before continuing
-                if done:
-                    time.sleep(2)  # Show death message for 2 seconds before continuing
+            # Render the current state
+            self.render()
 
+<<<<<<< HEAD
             if return_to_maze_select:
                 # Show maze selection menu
                 selection = menu.run_maze_only()  # New method to show only maze selection
@@ -372,14 +535,59 @@ class RetroVisualizer:
             else:
                 # Update maze path for next round
                 maze_path = os.path.join("mazes", next_maze['maze'] if isinstance(next_maze, dict) else next_maze)
+=======
+            # If paused, render the pause menu
+            if self.paused:
+                self.render_pause_menu()
+
+            # Update the display
+            pygame.display.flip()
+
+            # Add a small delay for smooth gameplay
+            pygame.time.wait(int(1000/FPS))
+
+        pygame.quit()
+
+    def show_maze_selection(self):
+        """Show maze selection menu and reset the game with the selected maze."""
+        selection = self.menu.show()
+        if selection:
+            maze_path = f"mazes/{selection['maze']}"
+            self.env.maze.load_maze(maze_path)
+            self.current_maze_name = os.path.splitext(os.path.basename(maze_path))[0]
+            # Reset game state
+            self.episode = 0
+            self.steps = 0
+            self._score_recorded = False
+            self.show_leaderboard = False
+            self.paused = False
+            self.game_over = False
+            # Reset environment
+            obs, _ = self.env.reset()
+            # Clear death reasons
+            self.env.snake1_death_reason = ""
+            self.env.snake2_death_reason = ""
+            # Reset model if provided
+            if 'model' in selection and selection['model']:
+                model_path = selection['model']['path']
+                try:
+                    if isinstance(self.model1, PPO):
+                        self.model1 = PPO.load(model_path)
+                    elif isinstance(self.model1, DQN):
+                        self.model1 = DQN.load(model_path)
+                    elif isinstance(self.model1, A2C):
+                        self.model1 = A2C.load(model_path)
+                except Exception as e:
+                    print(f"Error loading new model: {e}")
+>>>>>>> 4264bc1 (Added pause menu, improved snake controls, and enhanced visuals)
 
 if __name__ == "__main__":
     try:
         # Initialize environment with default maze
         env = SnakeEnv(
             maze_file="mazes/maze_natural.txt",
-            reward_approach=True,
-            opponent_policy='basic_follow'
+            reward_approach="A2",
+            opponent_policy='basic_follow'  # This ensures snake2 uses AI
         )
 
         # Initialize menu with correct dimensions
@@ -396,31 +604,67 @@ if __name__ == "__main__":
         # Initialize environment with selected maze
         env = SnakeEnv(
             maze_file=f"mazes/{selection['maze']}",
-            reward_approach=True,
-            opponent_policy='basic_follow'
+            reward_approach="A2",
+            opponent_policy='basic_follow'  # This ensures snake2 uses AI
         )
 
-        # Load the selected model
+        # Load the selected model for snake1
         model_path = selection['model']['path']
         model_name = selection['model']['name'].lower()
         print(f"Loading model from: {model_path}")
 
-        # Determine the algorithm type from the model name
-        if 'ppo' in model_name:
-            model = PPO.load(model_path)
-        elif 'dqn' in model_name:
-            model = DQN.load(model_path)
-        elif 'a2c' in model_name:
-            model = A2C.load(model_path)
-        else:
-            # Default to PPO if unable to determine
-            print("Unable to determine model type from name, defaulting to PPO")
-            model = PPO.load(model_path)
+        # Try to load model metadata first
+        try:
+            metadata = None
+            metadata_path = os.path.join(os.path.dirname(model_path), "metadata.json")
+            if os.path.exists(metadata_path):
+                with open(metadata_path, "r") as f:
+                    metadata = json.load(f)
+        except Exception as e:
+            print(f"Warning: Could not load model metadata: {e}")
 
-        print("Model loaded successfully")
+        # Determine the algorithm type
+        model_type = None
+        if metadata and "algorithm" in metadata:
+            model_type = metadata["algorithm"]
+        else:
+            # Fallback to name-based detection
+            if 'ppo' in model_name:
+                model_type = "PPO"
+            elif 'dqn' in model_name:
+                model_type = "DQN"
+            elif 'a2c' in model_name:
+                model_type = "A2C"
+
+        # Load and validate the model
+        try:
+            if model_type == "PPO":
+                model = PPO.load(model_path)
+                # Validate observation space matches environment
+                if not np.array_equal(model.observation_space.shape, env.observation_space.shape):
+                    raise ValueError(f"Model observation space {model.observation_space.shape} does not match environment {env.observation_space.shape}")
+            elif model_type == "DQN":
+                model = DQN.load(model_path)
+                if not np.array_equal(model.observation_space.shape, env.observation_space.shape):
+                    raise ValueError(f"Model observation space {model.observation_space.shape} does not match environment {env.observation_space.shape}")
+            elif model_type == "A2C":
+                model = A2C.load(model_path)
+                if not np.array_equal(model.observation_space.shape, env.observation_space.shape):
+                    raise ValueError(f"Model observation space {model.observation_space.shape} does not match environment {env.observation_space.shape}")
+            else:
+                print("Unable to determine model type, defaulting to PPO")
+                model = PPO.load(model_path)
+                if not np.array_equal(model.observation_space.shape, env.observation_space.shape):
+                    raise ValueError(f"Model observation space {model.observation_space.shape} does not match environment {env.observation_space.shape}")
+        except Exception as e:
+            print(f"Error loading model: {e}")
+            pygame.quit()
+            sys.exit(1)
+
+        print("Model loaded and validated successfully")
 
         # Create and run visualizer
-        viz = RetroVisualizer(env, model1=model)
+        viz = RetroVisualizer(env, model1=model)  # snake1 uses the loaded model, snake2 uses basic_follow AI
         viz.run(num_episodes=5)
 
     except Exception as e:

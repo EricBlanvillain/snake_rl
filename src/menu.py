@@ -135,9 +135,6 @@ class Menu:
         self.models = self.scan_models()
         self.selected_model = 0
 
-        # Load leaderboard
-        self.leaderboard = self.load_leaderboard()
-
         # States
         self.state = "model_select"  # "model_select", "maze_select", "game_over", "leaderboard"
         self.final_score = 0
@@ -156,6 +153,7 @@ class Menu:
                     })
         return models
 
+<<<<<<< HEAD
     def load_leaderboard(self):
         """Load leaderboard and convert old format scores if needed"""
         try:
@@ -212,6 +210,8 @@ class Menu:
         except Exception as e:
             print(f"Error adding score: {e}")
 
+=======
+>>>>>>> 4264bc1 (Added pause menu, improved snake controls, and enhanced visuals)
     def draw_model_select(self):
         """Draw the model selection screen with retro punk styling."""
         self.screen.fill((0, 0, 20))  # Dark blue background
@@ -416,6 +416,7 @@ class Menu:
         self.start_button.color = (0, 150, 255)  # Neon blue
         self.start_button.draw(self.screen, self.font)
 
+<<<<<<< HEAD
     def draw_leaderboard(self):
         self.screen.fill((0, 0, 20))
 
@@ -527,6 +528,8 @@ class Menu:
         self.start_button.color = (0, 255, 100)  # Neon green
         self.start_button.draw(self.screen, self.font)
 
+=======
+>>>>>>> 4264bc1 (Added pause menu, improved snake controls, and enhanced visuals)
     def run(self):
         running = True
         clock = pygame.time.Clock()
@@ -542,11 +545,28 @@ class Menu:
                             self.selected_model = (self.selected_model - 1) % len(self.models)
                         elif event.key == pygame.K_DOWN:
                             self.selected_model = (self.selected_model + 1) % len(self.models)
+<<<<<<< HEAD
                     elif self.state == "maze_select" or self.state == "leaderboard":
+=======
+                        elif event.key == pygame.K_RETURN:
+                            self.state = "maze_select"
+                            self.start_button.text = "Start Game"
+                            continue
+                    elif self.state == "maze_select":
+>>>>>>> 4264bc1 (Added pause menu, improved snake controls, and enhanced visuals)
                         if event.key == pygame.K_UP:
                             self.selected_maze = (self.selected_maze - 1) % len(self.maze_files)
                         elif event.key == pygame.K_DOWN:
                             self.selected_maze = (self.selected_maze + 1) % len(self.maze_files)
+                        elif event.key == pygame.K_ESCAPE:
+                            self.state = "model_select"
+                            self.start_button.text = "SELECT MODEL"
+                            continue
+                        elif event.key == pygame.K_RETURN:
+                            return {
+                                'maze': self.maze_files[self.selected_maze],
+                                'model': self.models[self.selected_model]
+                            }
 
                 if self.start_button.handle_event(event):
                     if self.state == "model_select":
@@ -559,7 +579,8 @@ class Menu:
                             'model': self.models[self.selected_model]
                         }
                     elif self.state == "game_over":
-                        self.state = "leaderboard"
+                        self.state = "maze_select"
+                        self.start_button.text = "Start Game"
                     else:  # leaderboard
                         # Return to maze selection with the same model
                         self.state = "maze_select"
@@ -571,19 +592,23 @@ class Menu:
                 self.draw_maze_select()
             elif self.state == "game_over":
                 self.draw_game_over()
-            else:  # leaderboard
-                self.draw_leaderboard()
 
             pygame.display.flip()
             clock.tick(60)
 
         return None
 
+<<<<<<< HEAD
     def show_game_over(self, score, snake_color='green'):
         """Show game over screen and add score to leaderboard."""
         self.final_score = score
         self.add_score(score, self.maze_files[self.selected_maze], snake_color)
         self.state = "game_over"
+=======
+    def show(self):
+        """Show the menu and return the selection."""
+        self.state = "maze_select"
+>>>>>>> 4264bc1 (Added pause menu, improved snake controls, and enhanced visuals)
         return self.run()
 
     def run_maze_only(self):
