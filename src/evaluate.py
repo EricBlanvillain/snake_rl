@@ -2,12 +2,16 @@
 import pygame
 import time
 import os
+import numpy as np
 
 # Important: Need to import algorithms to load models
 from stable_baselines3 import PPO, DQN, A2C
 
 from snake_env import SnakeEnv # We'll use the same env, but control both snakes
-from constants import MODEL_DIR, MAZE_FILE, GAME_SPEED
+from constants import (MODEL_DIR, MAZE_FILE, GAME_SPEED, MAX_STEPS_PER_EPISODE,
+                      EMPTY, WALL, FOOD_ITEM, POWERUP_ITEM,
+                      SNAKE1_HEAD, SNAKE1_BODY, SNAKE2_HEAD, SNAKE2_BODY)
+from game_elements import Food, PowerUp
 
 # --- Evaluation Parameters ---
 # Specify the paths to the two models you want to evaluate

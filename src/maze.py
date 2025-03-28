@@ -1,5 +1,6 @@
 # maze.py
 import os
+import pygame
 from constants import GRID_WIDTH, GRID_HEIGHT, WALL, EMPTY
 
 class Maze:

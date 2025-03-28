@@ -26,22 +26,33 @@ pip install -r requirements.txt
 
 ## Project Structure
 
-- `snake_env.py`: Custom OpenAI Gym environment for the Snake game
-- `game_elements.py`: Core game mechanics and objects
-- `train.py`: Training script for the DQN agent
-- `evaluate.py`: Evaluation script for trained models
-- `constants.py`: Configuration parameters
-- `maze.py`: Maze generation and handling
-- `mazes/`: Directory containing different maze configurations
-  - `default.txt`: Default empty maze
-  - `maze1.txt`, `maze2.txt`, `maze3.txt`: Various maze layouts
+```
+snake_rl/
+├── src/                    # Source code directory
+│   ├── snake_env.py       # Custom OpenAI Gym environment
+│   ├── game_elements.py   # Core game mechanics and objects
+│   ├── train.py          # Training script for DQN agent
+│   ├── evaluate.py       # Evaluation script for models
+│   ├── constants.py      # Configuration parameters
+│   └── maze.py          # Maze generation and handling
+├── mazes/                 # Maze configuration files
+│   ├── default.txt       # Default empty maze
+│   ├── maze1.txt        # Various maze layouts
+│   ├── maze2.txt
+│   └── maze3.txt
+├── requirements.txt       # Python dependencies
+├── README.md             # Project documentation
+├── CHANGELOG.md          # Version history
+├── LICENSE              # MIT License
+└── CONTRIBUTING.md      # Contributing guidelines
+```
 
 ## Training
 
 To train a new model:
 
 ```bash
-python train.py
+python src/train.py
 ```
 
 The training process includes:
@@ -60,12 +71,12 @@ tensorboard --logdir=runs
 To evaluate a trained model:
 
 ```bash
-python evaluate.py
+python src/evaluate.py
 ```
 
 ## Configuration
 
-Key parameters can be adjusted in `constants.py`:
+Key parameters can be adjusted in `src/constants.py`:
 - Learning rate
 - Discount factor
 - Epsilon values for exploration
@@ -94,6 +105,8 @@ Feel free to contribute to this project by:
 1. Forking the repository
 2. Creating a new branch for your feature
 3. Submitting a pull request
+
+For more details, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
