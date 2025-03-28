@@ -9,6 +9,7 @@ class Maze:
         self.barriers = set()
         self.filepath = filepath
         self.is_loaded = False  # Track if maze was loaded successfully
+        self.maze_file = filepath  # Store the maze file path
 
         if filepath and os.path.exists(filepath):
             self.load_maze(filepath)
@@ -32,6 +33,8 @@ class Maze:
                 print(f"Error: Maze file '{filepath}' does not exist")
                 self.is_loaded = False
                 return False
+
+            self.maze_file = filepath  # Update the maze file path
 
             with open(filepath, 'r') as f:
                 lines = f.readlines()

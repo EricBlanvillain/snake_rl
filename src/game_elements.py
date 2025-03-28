@@ -14,6 +14,8 @@ class Direction:
     RIGHT = Point(1, 0)
     # Map integer actions (0, 1, 2, 3) to directions
     INDEX_TO_DIR = [UP, DOWN, LEFT, RIGHT]
+    # Map directions to integer actions
+    DIR_TO_INDEX = {UP: 0, DOWN: 1, LEFT: 2, RIGHT: 3}
     # Opposite directions for checking invalid moves
     OPPOSITE = {UP: DOWN, DOWN: UP, LEFT: RIGHT, RIGHT: LEFT}
 
@@ -36,6 +38,8 @@ class Snake:
         self.grow_pending = 0
         self.is_dead = False
         self.powerup_active = None # Could store type/duration
+        self.steps_since_last_food = 0  # New counter for food timeout
+        self.death_reason = ""  # Track reason for death
 
     def move(self, action):
         # Get direction from action integer (0=UP, 1=DOWN, 2=LEFT, 3=RIGHT)
@@ -58,8 +62,12 @@ class Snake:
         else:
             self.body.pop() # Remove tail if not growing
 
+        # Increment steps since last food
+        self.steps_since_last_food += 1
+
     def grow(self, amount=1):
         self.grow_pending += amount
+        self.steps_since_last_food = 0  # Reset counter when food is eaten
 
     def check_collision_self(self):
         # Check if head collides with body (excluding the very next segment if len > 1)
