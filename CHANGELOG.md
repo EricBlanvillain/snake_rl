@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Maze selection interface
 - Dynamic score display
 - Multiple AI difficulty levels for opponent
+- Enhanced TensorBoard metrics tracking:
+  - Episode length and reward statistics
+  - Training loss monitoring
+  - Exploration rate tracking
+  - Buffer utilization metrics
+  - Performance metrics (FPS, episodes, timesteps)
 
 ### Changed
 - Reorganized project structure: moved all Python files to `src` directory for better organization
@@ -22,12 +28,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved game controls and user interface
 - Added proper game state management for pausing and resuming
 - Updated snake movement and collision detection
+- Improved DQN training configuration:
+  - Optimized training frequency and batch size
+  - Enhanced experience replay buffer management
+  - Better exploration rate scheduling
+  - More frequent model checkpoints
+- Enhanced TensorboardCallback for more reliable metric logging:
+  - Direct reward and episode length tracking
+  - Multiple methods for loss capture
+  - Improved moving average calculations
+  - Better episode completion detection
 
 ### Fixed
 - Snake movement validation and control issues
 - Game termination logic for both snakes
 - Action validation for AI opponent
 - Collision detection between snakes
+- TensorBoard metric logging issues:
+  - Missing episode statistics
+  - Inconsistent loss tracking
+  - Duplicate metric logging
+  - Episode completion detection
 
 ### Planned
 - Additional maze layouts

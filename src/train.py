@@ -82,6 +82,122 @@ class MazeCurriculumCallback(BaseCallback):
 
         return True
 
+class TensorboardCallback(BaseCallback):
+    """Custom callback for logging additional metrics to TensorBoard."""
+    def __init__(self, verbose=0):
+        super().__init__(verbose)
+        self.episode_rewards = []
+        self.episode_lengths = []
+        self.episodes_completed = 0
+        self.current_episode_reward = 0
+        self.current_episode_length = 0
+        self.last_time = time.time()
+        self.fps_buffer = []
+        self.last_loss = None
+
+    def _on_step(self):
+        """Called at each step."""
+        # Get info from the environment and model
+        infos = self.locals.get('infos', [{}])
+        if not isinstance(infos, list):
+            infos = [infos]
+        info = infos[0] if infos else {}
+
+        # Update episode stats
+        self.current_episode_length += 1
+        reward = self.locals.get('rewards', [0.0])[0]
+        self.current_episode_reward += reward
+
+        # Handle episode completion
+        dones = self.locals.get('dones', [False])
+        if not isinstance(dones, list):
+            dones = [dones]
+        done = dones[0] if dones else False
+
+        if done:
+            # Log episode statistics
+            self.episode_rewards.append(self.current_episode_reward)
+            self.episode_lengths.append(self.current_episode_length)
+
+            # Reset episode tracking
+            self.current_episode_reward = 0
+            self.current_episode_length = 0
+            self.episodes_completed += 1
+
+        # Calculate and log episode statistics
+        if self.episode_rewards:
+            # Get the most recent values
+            latest_reward = self.episode_rewards[-1] if done else self.current_episode_reward
+            latest_length = self.episode_lengths[-1] if done else self.current_episode_length
+
+            # Calculate moving averages
+            window = min(100, len(self.episode_rewards))
+            mean_reward = np.mean(self.episode_rewards[-window:])
+            mean_length = np.mean(self.episode_lengths[-window:])
+
+            # Log all metrics
+            self.logger.record("rollout/ep_rew_mean", mean_reward)
+            self.logger.record("rollout/ep_len_mean", mean_length)
+            self.logger.record("rollout/ep_rew", latest_reward)
+            self.logger.record("rollout/ep_len", latest_length)
+
+            if len(self.episode_rewards) >= 100:
+                self.logger.record("rollout/ep_rew_mean_100", mean_reward)
+                self.logger.record("rollout/ep_len_mean_100", mean_length)
+
+        # Training metrics for DQN
+        if isinstance(self.model, DQN):
+            # Get training info directly from the model
+            if hasattr(self.model, '_n_updates') and self.model._n_updates > 0:
+                # Try multiple ways to get the loss
+                loss = None
+
+                # Method 1: From locals
+                if 'train_info' in self.locals and isinstance(self.locals['train_info'], dict):
+                    loss = self.locals['train_info'].get('loss')
+
+                # Method 2: From model logger
+                if loss is None and hasattr(self.model, 'logger'):
+                    if hasattr(self.model.logger, 'name_to_value'):
+                        loss = self.model.logger.name_to_value.get('train/loss')
+
+                # Method 3: From policy
+                if loss is None and hasattr(self.model.policy, 'logger'):
+                    if hasattr(self.model.policy.logger, 'name_to_value'):
+                        loss = self.model.policy.logger.name_to_value.get('loss')
+
+                if loss is not None:
+                    self.logger.record("train/loss", float(loss))
+
+            # Log exploration rate
+            if hasattr(self.model, 'exploration_rate'):
+                self.logger.record("rollout/exploration_rate", self.model.exploration_rate)
+
+            # Log buffer stats
+            if hasattr(self.model, 'replay_buffer'):
+                if hasattr(self.model.replay_buffer, 'size'):
+                    buffer_size = self.model.replay_buffer.size()
+                    self.logger.record("train/buffer_size", buffer_size)
+                    if hasattr(self.model.replay_buffer, 'buffer_size'):
+                        self.logger.record("train/buffer_utilization",
+                                         buffer_size / self.model.replay_buffer.buffer_size * 100)
+
+        # Performance metrics
+        current_time = time.time()
+        fps = 1.0 / (current_time - self.last_time) if (current_time - self.last_time) > 0 else 0
+        self.fps_buffer.append(fps)
+        if len(self.fps_buffer) > 100:
+            self.fps_buffer.pop(0)
+        self.last_time = current_time
+
+        self.logger.record("time/total_timesteps", self.num_timesteps)
+        self.logger.record("time/episodes", self.episodes_completed)
+        self.logger.record("time/fps", np.mean(self.fps_buffer) if self.fps_buffer else 0)
+
+        # Ensure all metrics are written
+        self.logger.dump(self.num_timesteps)
+        return True
+
 class ExperimentConfig:
     def __init__(self,
                  run_name,
@@ -185,10 +301,31 @@ def train_agent(config):
         vec_env_cls=DummyVecEnv
     )
 
-    # Algorithm specific configuration
+    # Policy kwargs
     policy_kwargs = dict(
         net_arch=config.net_arch
     )
+
+    # Initialize callbacks
+    checkpoint_callback = CheckpointCallback(
+        save_freq=50000,
+        save_path=model_dir,
+        name_prefix=config.run_name
+    )
+
+    lr_callback = LearningRateScheduler(
+        initial_lr=config.learning_rate,
+        min_lr=config.min_learning_rate,
+        decay_factor=config.lr_decay_factor,
+        decay_steps=config.lr_decay_steps,
+        total_timesteps=config.total_timesteps
+    )
+
+    maze_callback = MazeCurriculumCallback(eval_freq=10000)
+    tensorboard_callback = TensorboardCallback()
+
+    # Combine all callbacks
+    callbacks = [checkpoint_callback, lr_callback, maze_callback, tensorboard_callback]
 
     # Initialize the algorithm
     if config.algorithm == 'DQN':
@@ -198,13 +335,19 @@ def train_agent(config):
             verbose=1,
             tensorboard_log=log_dir,
             device=DEVICE,
-            buffer_size=config.buffer_size,
+            policy_kwargs=policy_kwargs,
             learning_rate=config.learning_rate,
-            batch_size=config.batch_size,
+            buffer_size=config.buffer_size,
             learning_starts=config.learning_starts,
+            batch_size=config.batch_size,
             exploration_fraction=config.exploration_fraction,
             exploration_final_eps=config.exploration_final_eps,
-            policy_kwargs=policy_kwargs
+            train_freq=1,  # Train every step
+            gradient_steps=1,
+            target_update_interval=1000,
+            gamma=0.99,
+            optimize_memory_usage=False,  # Ensure full storage of experiences
+            stats_window_size=100  # Keep more episodes in statistics
         )
     elif config.algorithm == 'PPO':
         model = PPO(
@@ -217,31 +360,6 @@ def train_agent(config):
         )
     else:
         raise ValueError(f"Unsupported algorithm: {config.algorithm}")
-
-    # Setup callbacks
-    callbacks = []
-
-    # Checkpoint callback
-    checkpoint_callback = CheckpointCallback(
-        save_freq=max(50000 // config.n_envs, 1000),
-        save_path=os.path.join(run_dir, "checkpoints"),
-        name_prefix="model"
-    )
-    callbacks.append(checkpoint_callback)
-
-    # Learning rate scheduler callback
-    lr_scheduler = LearningRateScheduler(
-        initial_lr=config.learning_rate,
-        min_lr=config.min_learning_rate,
-        decay_factor=config.lr_decay_factor,
-        decay_steps=config.lr_decay_steps,
-        total_timesteps=config.total_timesteps
-    )
-    callbacks.append(lr_scheduler)
-
-    # Add curriculum learning callback
-    curriculum_callback = MazeCurriculumCallback(eval_freq=10000)
-    callbacks.append(curriculum_callback)
 
     # Train the model
     try:

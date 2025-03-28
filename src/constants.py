@@ -62,37 +62,90 @@ REWARD_HUNGER_A1 = -0.05    # Additional penalty when steps_since_last_food > 45
 
 # --- Reward Structure - Approach 2 (Sophisticated) ---
 # Base rewards
-REWARD_STEP_A2 = 0.1        # Small reward for surviving each step
-REWARD_FOOD_A2 = 15.0       # Major reward for eating food
-REWARD_POWERUP_A2 = 7.5     # Good reward for powerup
-REWARD_DEATH_A2 = -15.0     # Significant death penalty
-REWARD_TIMEOUT_A2 = -20.0   # Severe penalty for dying from food timeout
-REWARD_HUNGER_A2 = -0.2     # Additional penalty when steps_since_last_food > 45 (75% of timeout)
+REWARD_STEP_A2 = 0.05  # Increased step reward to strongly encourage survival
+REWARD_FOOD_A2 = 20.0  # Increased food reward
+REWARD_POWERUP_A2 = 10.0  # Increased powerup reward
+REWARD_DEATH_A2 = -2.0  # Further reduced death penalty
+REWARD_TIMEOUT_A2 = -1.0  # Reduced timeout penalty
+REWARD_HUNGER_A2 = -0.005  # Minimal hunger penalty
 
 # Progressive rewards
-REWARD_CLOSER_TO_FOOD = 0.2      # Original reward for moving closer to food
-REWARD_FURTHER_FROM_FOOD = -0.1   # Original penalty for moving away from food
-REWARD_EFFICIENT_PATH = 0.3       # Reward for moving along efficient path to food
-REWARD_SURVIVAL_BONUS = 0.5       # Bonus for surviving longer than median episode length
-REWARD_KILL_OPPONENT = 5.0        # Reward for eliminating opponent
-REWARD_DEATH_BY_OPPONENT = -5.0   # Additional penalty for dying to opponent
+REWARD_CLOSER_TO_FOOD = 0.3  # Increased reward for moving towards food
+REWARD_FURTHER_FROM_FOOD = -0.01  # Minimal penalty for moving away
+REWARD_EFFICIENT_PATH = 5.0  # Increased efficient path reward significantly
+REWARD_SURVIVAL_BONUS = 0.5  # Increased survival bonus
+REWARD_KILL_OPPONENT = 5.0
+REWARD_DEATH_BY_OPPONENT = -1.0
+
+# Distance-based rewards
+REWARD_WALL_DISTANCE = 0.2  # Increased wall distance reward
+REWARD_OPPONENT_DISTANCE = 0.2  # Increased opponent distance reward
 
 # --- DQN Specific Settings ---
 REPLAY_BUFFER_SIZE = 100_000
-BATCH_SIZE = 128          # Standard batch size that worked well
-LEARNING_RATE = 3e-4      # Original learning rate that showed good progress
-GAMMA = 0.99             # High discount factor for long-term rewards
-TAU = 0.005             # Soft update parameter
-TRAIN_FREQ = 4          # Update frequency
-GRADIENT_STEPS = 1       # Single gradient step per update
-LEARNING_STARTS = 10_000  # Original learning start step
-EXPLORATION_FRACTION = 0.2  # Original exploration fraction
+BATCH_SIZE = 128
+LEARNING_RATE = 3e-4
+GAMMA = 0.99
+TAU = 0.005
+TRAIN_FREQ = 4
+GRADIENT_STEPS = 1
+LEARNING_STARTS = 5_000  # Reduced to start learning earlier
+EXPLORATION_FRACTION = 0.3  # Increased exploration period
 EXPLORATION_INITIAL_EPS = 1.0
 EXPLORATION_FINAL_EPS = 0.05
 
+# --- Curriculum Learning Settings ---
+CURRICULUM_ENABLED = True
+CURRICULUM_STAGES = {
+    1: {
+        'maze_file': 'mazes/maze_empty.txt',
+        'min_score_advance': 1,  # Even easier to advance
+        'opponent_enabled': False,
+        'powerups_enabled': False,
+        'food_max_distance': 3,  # Keep food extremely close initially
+    },
+    2: {
+        'maze_file': 'mazes/maze_empty.txt',
+        'min_score_advance': 2,
+        'opponent_enabled': False,
+        'powerups_enabled': False,
+        'food_max_distance': 5,
+    },
+    3: {
+        'maze_file': 'mazes/maze_empty.txt',  # Still empty maze
+        'min_score_advance': 3,
+        'opponent_enabled': False,
+        'powerups_enabled': True,
+        'food_max_distance': 8,
+    },
+    4: {
+        'maze_file': 'mazes/maze_simple.txt',  # Now introduce simple maze
+        'min_score_advance': 4,
+        'opponent_enabled': False,
+        'powerups_enabled': True,
+        'food_max_distance': 10,
+    },
+    5: {
+        'maze_file': 'mazes/maze_medium.txt',
+        'min_score_advance': 5,
+        'opponent_enabled': True,
+        'powerups_enabled': True,
+        'food_max_distance': None,
+    }
+}
+
 # --- Environment Settings ---
-MAX_STEPS_PER_EPISODE = GRID_WIDTH * GRID_HEIGHT * 2  # Maximum steps before episode truncation
+MAX_STEPS_PER_EPISODE = GRID_WIDTH * GRID_HEIGHT * 2
 MAX_EPISODE_STEPS = 1000
-POWERUP_SPAWN_CHANCE = 0.3       # Probability of powerup spawning when resetting environment
-MAZE_ROTATION = True       # Whether to randomly rotate mazes during training
-FOOD_TIMEOUT = 60         # Number of steps before snake dies from hunger
+POWERUP_SPAWN_CHANCE = 0.2  # Further reduced to simplify early learning
+MAZE_ROTATION = False  # Disabled to make early learning easier
+FOOD_TIMEOUT = 150  # Increased food timeout significantly
+
+# --- Additional Observation Features ---
+USE_DISTANCE_FEATURES = True      # Include distance-based features
+USE_DANGER_FEATURES = True        # Include danger detection features
+USE_FOOD_DIRECTION = True         # Include food direction features
+USE_LENGTH_FEATURE = True         # Include normalized snake length
+USE_WALL_DISTANCE = True          # Include distance to nearest wall
+USE_OPPONENT_FEATURES = True      # Include opponent-related features
+USE_POWERUP_FEATURES = True       # Include powerup-related features

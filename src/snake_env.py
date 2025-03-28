@@ -11,17 +11,28 @@ from maze import Maze
 from game_elements import Point, Direction, Snake, Food, PowerUp
 
 class SnakeEnv(gym.Env):
-    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": GAME_SPEED}
+    """Snake environment with curriculum learning and two learning agents."""
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 4}
 
-    def __init__(self, render_mode=None, maze_file="mazes/maze_natural.txt", reward_approach="A2", opponent_policy='stay_still'):
+    def __init__(self, render_mode=None, maze_file="mazes/maze_natural.txt", reward_approach="A2", multi_agent=False, opponent_policy="basic_follow"):
         """Initialize the snake environment.
+
         Args:
-            render_mode: How to render the environment ('human' or 'rgb_array')
-            maze_file: Path to the maze file to use
-            reward_approach: Which reward structure to use ("A2" for sophisticated rewards)
-            opponent_policy: Policy for the opponent snake
+            render_mode: How to render the environment
+            maze_file: Path to the maze file
+            reward_approach: Which reward structure to use
+            multi_agent: Whether to use two learning agents
+            opponent_policy: Policy for opponent in single-agent mode ('basic_follow', 'random', 'stay_still')
         """
         super().__init__()
+
+        self.multi_agent = multi_agent
+        self.opponent_policy = opponent_policy
+
+        # Curriculum learning state
+        self.curriculum_stage = 1 if CURRICULUM_ENABLED else 4
+        self.stage_scores = []  # Track scores for stage advancement
+        self.current_stage_config = CURRICULUM_STAGES[self.curriculum_stage]
 
         self.grid_width = GRID_WIDTH
         self.grid_height = GRID_HEIGHT
@@ -29,9 +40,9 @@ class SnakeEnv(gym.Env):
         self.window_width = self.grid_width * self.block_size
         self.window_height = self.grid_height * self.block_size
 
-        self.maze = Maze(maze_file)
+        # Use maze file from curriculum if enabled, otherwise use provided
+        self.maze = Maze(self.current_stage_config['maze_file'] if CURRICULUM_ENABLED else maze_file)
         self.reward_approach = reward_approach
-        self.opponent_policy_type = opponent_policy
 
         # Initialize game elements
         self.food = None
@@ -41,216 +52,546 @@ class SnakeEnv(gym.Env):
         self.snake1_death_reason = ""
         self.snake2_death_reason = ""
 
-        # Calculate total observation space size
+        # Track episode statistics
+        self.episode_steps = 0
+        self.total_food_eaten = 0
+        self.total_powerups_collected = 0
+        self.snake2_total_food_eaten = 0
+        self.snake2_total_powerups_collected = 0
+
+        # Calculate observation space size
         self.grid_size = self.grid_width * self.grid_height
         n_additional_features = 0
-        if USE_DISTANCE_FEATURES:
-            n_additional_features += 3  # food, wall, opponent distances
-            n_additional_features += 2  # relative position (x, y)
-            n_additional_features += 2  # body and powerup distances
-        if USE_DANGER_FEATURES:
-            n_additional_features += 4  # immediate danger in 4 directions
-            n_additional_features += 4  # future danger in 4 directions
-        if USE_FOOD_DIRECTION:
-            n_additional_features += 4  # food direction one-hot
-            n_additional_features += 4  # current direction one-hot
-        n_additional_features += 1  # normalized snake length
 
-        # Define action and observation space
+        if USE_DISTANCE_FEATURES:
+            n_additional_features += 7
+        if USE_DANGER_FEATURES:
+            n_additional_features += 8
+        if USE_FOOD_DIRECTION:
+            n_additional_features += 8
+        if USE_LENGTH_FEATURE:
+            n_additional_features += 1
+        if USE_WALL_DISTANCE:
+            n_additional_features += 4
+        if USE_OPPONENT_FEATURES:
+            n_additional_features += 4
+        if USE_POWERUP_FEATURES:
+            n_additional_features += 3
+
+        # Define action and observation spaces (same for both agents)
         self.action_space = spaces.Discrete(4)
         self.observation_space = spaces.Box(
             low=0,
             high=max(SNAKE1_HEAD, SNAKE1_BODY, SNAKE2_HEAD, SNAKE2_BODY),
-            shape=(296,),  # Fixed to match trained model
+            shape=(self.grid_size + n_additional_features,),
             dtype=np.float32
         )
-
-        # Verify observation space size matches expected size
-        expected_size = self.grid_size + n_additional_features
-        if expected_size != 296:
-            print(f"Warning: Current observation space size ({expected_size}) differs from trained model (296)")
-            print(f"Grid size: {self.grid_size}, Additional features: {n_additional_features}")
-            print("Feature breakdown:")
-            if USE_DISTANCE_FEATURES:
-                print("- Distance features: 7 (food, wall, opponent, rel_x, rel_y, body, powerup)")
-            if USE_DANGER_FEATURES:
-                print("- Danger features: 8 (4 immediate + 4 future)")
-            if USE_FOOD_DIRECTION:
-                print("- Direction features: 8 (4 food + 4 current)")
-            print("- Other features: 1 (normalized length)")
 
         self.render_mode = render_mode
         self.screen = None
         self.clock = None
         if self.render_mode == "human":
             pygame.init()
-            pygame.display.set_caption("Snake RL")
+            pygame.display.set_caption("Snake RL - Two Learning Agents")
             self.screen = pygame.display.set_mode((self.window_width, self.window_height))
             self.clock = pygame.time.Clock()
 
-        self._current_step = 0
-        self._median_episode_length = 10  # Initial estimate, will be updated during training
+    def step(self, action):
+        """
+        Step function supporting both single and multi-agent modes.
 
-    def _get_reward(self, snake1_ate_food, snake1_ate_powerup, snake1_died, snake2_died, info):
-        reward = 0.0
+        Args:
+            action: Either a single action (int) for single-agent mode
+                   or a dictionary {'snake1': action1, 'snake2': action2} for multi-agent mode
+        """
+        # Convert single action to action dict if needed
+        action_dict = action if self.multi_agent else {'snake1': action, 'snake2': self._get_opponent_action()}
 
-        if self.reward_approach == "A2":  # Using string comparison for reward approach
-            # If snake1 is already dead or just died, return appropriate reward
-            if self.snake1_death_reason or snake1_died:
-                # Only give death penalty once when snake actually dies
-                if snake1_died:
-                    if info.get("snake1_death_reason") == "food_timeout":
-                        return REWARD_TIMEOUT_A2
-                    else:
-                        base_penalty = REWARD_DEATH_A2
-                        if info.get("snake1_death_reason") == "collision_opponent":
-                            base_penalty += REWARD_DEATH_BY_OPPONENT
-                        return base_penalty
-                return 0.0  # No more rewards after death
+        # Process actions for both snakes
+        snake1_action = action_dict['snake1']
+        snake2_action = action_dict['snake2']
 
-            # Base reward for staying alive
-            reward += REWARD_STEP_A2
+        # Initialize variables for reward calculation
+        snake1_ate_food = False
+        snake1_ate_powerup = False
+        snake2_ate_food = False
+        snake2_ate_powerup = False
+        snake1_died = False
+        snake2_died = False
 
-            # Food rewards
-            if snake1_ate_food:
-                reward += REWARD_FOOD_A2
+        # Update episode counter
+        self.episode_steps += 1
 
-            # Powerup rewards
-            if snake1_ate_powerup:
-                reward += REWARD_POWERUP_A2
+        # Process snake1's movement if it's not already dead
+        if not self.snake1_death_reason:
+            snake1_died = self._process_snake_movement(self.snake1, snake1_action, 1)
+            if not snake1_died:
+                # Check for food/powerup consumption for snake1
+                snake1_ate_food, snake1_ate_powerup = self._check_consumables(self.snake1, 1)
 
-            # Add hunger penalty when getting close to timeout
-            if self.snake1 and hasattr(self.snake1, 'steps_since_last_food') and self.snake1.steps_since_last_food > 45:  # 75% of timeout threshold
-                reward += REWARD_HUNGER_A2
+        # Process snake2's movement if it's not already dead
+        if not self.snake2_death_reason:
+            snake2_died = self._process_snake_movement(self.snake2, snake2_action, 2)
+            if not snake2_died:
+                # Check for food/powerup consumption for snake2
+                snake2_ate_food, snake2_ate_powerup = self._check_consumables(self.snake2, 2)
 
-            # Opponent interaction
-            if snake2_died and not snake1_died:
-                reward += REWARD_KILL_OPPONENT
+        # Check for food timeout for both snakes
+        if self.snake1 and not self.snake1_death_reason and self.snake1.steps_since_last_food >= FOOD_TIMEOUT:
+            self.snake1_death_reason = "food_timeout"
+            snake1_died = True
 
-            # Survival bonus
-            if self._current_step > self._median_episode_length:
-                reward += REWARD_SURVIVAL_BONUS
+        if self.snake2 and not self.snake2_death_reason and self.snake2.steps_since_last_food >= FOOD_TIMEOUT:
+            self.snake2_death_reason = "food_timeout"
+            snake2_died = True
+
+        # Spawn new food if needed and at least one snake is alive
+        if self.food is None and (not self.snake1_death_reason or not self.snake2_death_reason):
+            max_distance = self.current_stage_config.get('food_max_distance') if CURRICULUM_ENABLED else None
+            self.food = self._place_item(Food, max_distance=max_distance)
+
+        # Spawn new powerup if enabled and at least one snake is alive
+        if (self.powerup is None and
+            self.current_stage_config['powerups_enabled'] and
+            random.random() < POWERUP_SPAWN_CHANCE and
+            (not self.snake1_death_reason or not self.snake2_death_reason)):
+            self.powerup = self._place_item(PowerUp)
+
+        # Get observations and info for both snakes
+        snake1_obs = self._get_obs(1)
+        snake2_obs = self._get_obs(2)
+
+        info = {
+            'snake1': {
+                'death_reason': self.snake1_death_reason if snake1_died else "",
+                'score': self.snake1.score if self.snake1 else 0,
+                'valid_actions': self._get_valid_actions_mask(1)
+            },
+            'snake2': {
+                'death_reason': self.snake2_death_reason if snake2_died else "",
+                'score': self.snake2.score if self.snake2 else 0,
+                'valid_actions': self._get_valid_actions_mask(2)
+            }
+        }
+
+        # Calculate rewards for both snakes
+        snake1_reward = self._get_reward(snake1_ate_food, snake1_ate_powerup, snake1_died, snake2_died, info['snake1'], 1)
+        snake2_reward = self._get_reward(snake2_ate_food, snake2_ate_powerup, snake2_died, snake1_died, info['snake2'], 2)
+
+        # Episode ends only when snake1 (the primary learning agent) dies
+        done = bool(self.snake1_death_reason)
+
+        # Update curriculum learning scores if episode is done
+        if done:
+            self.stage_scores.append(self.snake1.score)
+
+        if self.render_mode == "human":
+            self._render_frame()
+
+        # Return appropriate format based on mode
+        if self.multi_agent:
+            return {
+                'snake1': (snake1_obs, snake1_reward, done, False, info['snake1']),
+                'snake2': (snake2_obs, snake2_reward, bool(self.snake2_death_reason), False, info['snake2'])
+            }
         else:
-            raise ValueError(f"Unknown reward approach: {self.reward_approach}. Currently only 'A2' is supported.")
+            return snake1_obs, snake1_reward, done, False, info['snake1']
 
-        return reward
-
-    def _get_obs(self):
-        # Create base grid representation
+    def _get_obs(self, snake_id=1):
+        """Get observation for specified snake."""
         obs_grid = np.full((self.grid_height, self.grid_width), EMPTY, dtype=np.float32)
+        self._add_basic_elements_to_grid(obs_grid)
 
-        # Add walls
-        for (x, y) in self.maze.barriers:
-            if 0 <= y < self.grid_height and 0 <= x < self.grid_width:
-                obs_grid[y, x] = WALL
-
-        # Add food
-        if self.food and 0 <= self.food.position.y < self.grid_height and 0 <= self.food.position.x < self.grid_width:
-            obs_grid[self.food.position.y, self.food.position.x] = FOOD_ITEM
-
-        # Add powerup
-        if self.powerup and 0 <= self.powerup.position.y < self.grid_height and 0 <= self.powerup.position.x < self.grid_width:
-            obs_grid[self.powerup.position.y, self.powerup.position.x] = POWERUP_ITEM
-
-        # Add snake 2 (opponent)
-        if self.snake2 and hasattr(self.snake2, 'body'):
-            for i, segment in enumerate(self.snake2.body):
-                if 0 <= segment.y < self.grid_height and 0 <= segment.x < self.grid_width:
-                    obs_grid[segment.y, segment.x] = SNAKE2_HEAD if i == 0 else SNAKE2_BODY
-
-        # Add snake 1 (agent)
-        if self.snake1 and hasattr(self.snake1, 'body'):
-            for i, segment in enumerate(self.snake1.body):
-                if 0 <= segment.y < self.grid_height and 0 <= segment.x < self.grid_width:
-                    obs_grid[segment.y, segment.x] = SNAKE1_HEAD if i == 0 else SNAKE1_BODY
+        # Get the snake for which we're generating the observation
+        snake = self.snake1 if snake_id == 1 else self.snake2
+        opponent = self.snake2 if snake_id == 1 else self.snake1
 
         # Flatten the grid
         flat_grid = obs_grid.flatten()
-
-        # Calculate additional features
         additional_features = []
 
-        if USE_DISTANCE_FEATURES:
-            max_dist = self.grid_width + self.grid_height
+        if snake and hasattr(snake, 'body'):
+            head = snake.body[0]
 
-            if self.snake1 and self.food:
-                # Distance to food (normalized between 0 and 1)
-                food_dist = self._get_manhattan_distance(self.snake1.body[0], self.food.position)
-                norm_food_dist = food_dist / max_dist
+            if USE_DISTANCE_FEATURES:
+                additional_features.extend(self._get_distance_features(head, snake_id))
 
-                # Distance to nearest wall (normalized)
-                wall_dist = self._get_nearest_wall_distance(self.snake1.body[0])
-                norm_wall_dist = wall_dist / max_dist
+            if USE_DANGER_FEATURES:
+                additional_features.extend(self._get_danger_features(snake_id))
 
-                # Distance to opponent (normalized)
-                if self.snake2:
-                    opp_dist = self._get_manhattan_distance(self.snake1.body[0], self.snake2.body[0])
-                    norm_opp_dist = opp_dist / max_dist
-                else:
-                    norm_opp_dist = 1.0  # Maximum normalized distance if no opponent
+            if USE_FOOD_DIRECTION:
+                additional_features.extend(self._get_food_direction_features(head))
 
-                additional_features.extend([norm_food_dist, norm_wall_dist, norm_opp_dist])
+            if USE_LENGTH_FEATURE:
+                additional_features.append(len(snake.body) / (self.grid_width * self.grid_height))
 
-                # Add relative position features (normalized between -1 and 1)
-                rel_x = (self.food.position.x - self.snake1.body[0].x) / self.grid_width
-                rel_y = (self.food.position.y - self.snake1.body[0].y) / self.grid_height
-                additional_features.extend([rel_x, rel_y])
+            if USE_WALL_DISTANCE:
+                additional_features.extend(self._get_wall_distance_features(head))
+
+            if USE_OPPONENT_FEATURES and opponent and not opponent.death_reason:
+                additional_features.extend(self._get_opponent_features(head, opponent))
             else:
-                # Add placeholder values when food or snake1 doesn't exist
-                additional_features.extend([1.0, 1.0, 1.0])  # max distances
-                additional_features.extend([0.0, 0.0])  # neutral relative position
+                additional_features.extend([0.0] * 4)
 
-            # Add normalized distance to closest snake body part (excluding head)
-            if self.snake1 and len(self.snake1.body) > 1:
-                min_body_dist = min(self._get_manhattan_distance(self.snake1.body[0], segment)
-                                  for segment in self.snake1.body[1:])
-                norm_body_dist = min_body_dist / max_dist
-            else:
-                norm_body_dist = 1.0
-            additional_features.append(norm_body_dist)
-
-            # Add normalized distance to closest powerup
-            if self.snake1 and self.powerup:
-                powerup_dist = self._get_manhattan_distance(self.snake1.body[0], self.powerup.position)
-                norm_powerup_dist = powerup_dist / max_dist
-            else:
-                norm_powerup_dist = 1.0
-            additional_features.append(norm_powerup_dist)
-
-        if USE_DANGER_FEATURES and self.snake1:
-            # Check immediate danger in each direction
-            dangers = self._get_danger_in_directions()
-            additional_features.extend(dangers)
-
-            # Add look-ahead danger (2 steps)
-            future_dangers = self._get_future_danger()
-            additional_features.extend(future_dangers)
+            if USE_POWERUP_FEATURES:
+                additional_features.extend(self._get_powerup_features(head))
         else:
-            # Add placeholder values for danger features
-            additional_features.extend([0.0] * 8)  # 4 immediate + 4 future dangers
+            # Add zero features if snake doesn't exist
+            n_features = sum([
+                7 if USE_DISTANCE_FEATURES else 0,
+                8 if USE_DANGER_FEATURES else 0,
+                8 if USE_FOOD_DIRECTION else 0,
+                1 if USE_LENGTH_FEATURE else 0,
+                4 if USE_WALL_DISTANCE else 0,
+                4 if USE_OPPONENT_FEATURES else 0,
+                3 if USE_POWERUP_FEATURES else 0
+            ])
+            additional_features = [0.0] * n_features
 
-        if USE_FOOD_DIRECTION and self.snake1 and self.food:
-            # Relative direction to food
-            food_dir = self._get_relative_direction(self.snake1.body[0], self.food.position)
-            additional_features.extend(food_dir)
-
-            # Add snake's current direction as one-hot
-            current_dir = [0.0] * 4
-            current_dir[Direction.DIR_TO_INDEX[self.snake1.direction]] = 1.0
-            additional_features.extend(current_dir)
-        else:
-            # Add placeholder values for direction features
-            additional_features.extend([0.0] * 8)  # 4 food direction + 4 current direction
-
-        # Add snake length (normalized)
-        if self.snake1:
-            norm_length = len(self.snake1.body) / (self.grid_width * self.grid_height)
-        else:
-            norm_length = 0.0
-        additional_features.append(norm_length)
-
-        # Combine grid with additional features
         return np.concatenate([flat_grid, np.array(additional_features, dtype=np.float32)])
+
+    def _add_basic_elements_to_grid(self, grid):
+        """Add basic elements (walls, snakes, food, powerups) to the observation grid."""
+        # Add walls
+        for x in range(self.grid_width):
+            for y in range(self.grid_height):
+                if self.maze.is_wall(x, y):
+                    grid[y, x] = WALL
+
+        def is_valid_position(pos):
+            """Check if a position is within grid bounds."""
+            return (0 <= pos.x < self.grid_width and
+                   0 <= pos.y < self.grid_height)
+
+        # Add snake1 if it exists
+        if self.snake1 and hasattr(self.snake1, 'body'):
+            # Add body
+            for segment in self.snake1.body[1:]:
+                if is_valid_position(segment):
+                    grid[segment.y, segment.x] = SNAKE1_BODY
+            # Add head
+            if self.snake1.body:
+                head = self.snake1.body[0]
+                if is_valid_position(head):
+                    grid[head.y, head.x] = SNAKE1_HEAD
+
+        # Add snake2 if it exists
+        if self.snake2 and hasattr(self.snake2, 'body'):
+            # Add body
+            for segment in self.snake2.body[1:]:
+                if is_valid_position(segment):
+                    grid[segment.y, segment.x] = SNAKE2_BODY
+            # Add head
+            if self.snake2.body:
+                head = self.snake2.body[0]
+                if is_valid_position(head):
+                    grid[head.y, head.x] = SNAKE2_HEAD
+
+        # Add food
+        if self.food and hasattr(self.food, 'position'):
+            pos = self.food.position
+            if is_valid_position(pos):
+                grid[pos.y, pos.x] = FOOD_ITEM
+
+        # Add powerup
+        if self.powerup and hasattr(self.powerup, 'position'):
+            pos = self.powerup.position
+            if is_valid_position(pos):
+                grid[pos.y, pos.x] = POWERUP_ITEM
+
+    def _get_reward(self, ate_food, ate_powerup, died, opponent_died, info, snake_id=1):
+        """Calculate reward for specified snake."""
+        reward = 0
+        snake = self.snake1 if snake_id == 1 else self.snake2
+        opponent = self.snake2 if snake_id == 1 else self.snake1
+
+        if self.reward_approach == "A2":
+            # Base rewards
+            reward += REWARD_STEP_A2
+            if ate_food:
+                reward += REWARD_FOOD_A2
+            if ate_powerup:
+                reward += REWARD_POWERUP_A2
+            if died:
+                reward += REWARD_DEATH_A2
+            if died and info['death_reason'] == "food_timeout":
+                reward += REWARD_TIMEOUT_A2
+
+            # Progressive rewards
+            if snake and hasattr(snake, 'body'):
+                head = snake.body[0]
+                if self.food:
+                    new_dist = self._get_manhattan_distance(head, self.food.position)
+                    if hasattr(snake, 'prev_food_distance'):
+                        if new_dist < snake.prev_food_distance:
+                            reward += REWARD_CLOSER_TO_FOOD
+                        elif new_dist > snake.prev_food_distance:
+                            reward += REWARD_FURTHER_FROM_FOOD
+                    snake.prev_food_distance = new_dist
+
+                # Wall distance reward
+                if USE_WALL_DISTANCE:
+                    min_wall_dist = min(
+                        head.x,
+                        head.y,
+                        self.grid_width - 1 - head.x,
+                        self.grid_height - 1 - head.y
+                    )
+                    reward += REWARD_WALL_DISTANCE * min_wall_dist
+
+                # Opponent distance reward
+                if opponent and not opponent.death_reason:
+                    opp_dist = self._get_manhattan_distance(head, opponent.body[0])
+                    reward += REWARD_OPPONENT_DISTANCE * min(opp_dist, 5)
+
+                # Hunger penalty
+                if snake.steps_since_last_food > 45:
+                    reward += REWARD_HUNGER_A2
+
+        return reward
+
+    def reset(self, seed=None, options=None):
+        """Reset environment supporting both single and multi-agent modes."""
+        super().reset(seed=seed)
+
+        # Reset environment state
+        self.snake1_death_reason = ""
+        self.snake2_death_reason = ""
+        self.episode_steps = 0
+        self.food = None
+        self.powerup = None
+
+        # Initialize snakes with proper parameters
+        start_pos1 = self._get_random_empty_position()
+        start_dir1 = random.choice(list(Direction.INDEX_TO_DIR))
+        self.snake1 = Snake(1, start_pos1, start_dir1, GREEN1, BLUE1)
+
+        # Ensure second snake starts in a different position
+        while True:
+            start_pos2 = self._get_random_empty_position()
+            if start_pos2 != start_pos1:
+                break
+        start_dir2 = random.choice(list(Direction.INDEX_TO_DIR))
+        self.snake2 = Snake(2, start_pos2, start_dir2, GREEN2, BLUE2)
+
+        # Place initial food
+        max_distance = self.current_stage_config.get('food_max_distance') if CURRICULUM_ENABLED else None
+        self.food = self._place_item(Food, max_distance=max_distance)
+
+        # Get initial observations
+        snake1_obs = self._get_obs(1)
+        snake2_obs = self._get_obs(2)
+
+        if self.render_mode == "human":
+            self._render_frame()
+
+        # Return appropriate format based on mode
+        if self.multi_agent:
+            return {
+                'snake1': (snake1_obs, {}),
+                'snake2': (snake2_obs, {})
+            }
+        else:
+            return snake1_obs, {}
+
+    def _check_curriculum_advancement(self):
+        """Check if we should advance to the next curriculum stage."""
+        if not CURRICULUM_ENABLED or self.curriculum_stage >= 4:
+            return False
+
+        stage_config = CURRICULUM_STAGES[self.curriculum_stage]
+        min_score = stage_config['min_score_advance']
+
+        # Keep only last 10 episodes for evaluation
+        self.stage_scores = self.stage_scores[-10:]
+
+        # Check if ready to advance
+        if len(self.stage_scores) >= 5:  # Need at least 5 episodes to evaluate
+            avg_score = sum(self.stage_scores) / len(self.stage_scores)
+            if avg_score >= min_score:
+                self.curriculum_stage += 1
+                self.stage_scores = []  # Reset scores for new stage
+                self.current_stage_config = CURRICULUM_STAGES[self.curriculum_stage]
+                return True
+        return False
+
+    def _get_distance_features(self, head, snake_id):
+        """Calculate distance-based features."""
+        max_dist = self.grid_width + self.grid_height
+        features = []
+
+        # Distance to food
+        if self.food:
+            food_dist = self._get_manhattan_distance(head, self.food.position)
+            norm_food_dist = food_dist / max_dist
+            # Relative position to food
+            rel_x = (self.food.position.x - head.x) / self.grid_width
+            rel_y = (self.food.position.y - head.y) / self.grid_height
+        else:
+            norm_food_dist = 1.0
+            rel_x = rel_y = 0.0
+
+        # Distance to nearest wall
+        wall_dist = self._get_nearest_wall_distance(head)
+        norm_wall_dist = wall_dist / max_dist
+
+        # Distance to opponent
+        if snake_id == 1 and self.snake2:
+            opp_dist = self._get_manhattan_distance(head, self.snake2.body[0])
+            norm_opp_dist = opp_dist / max_dist
+        else:
+            norm_opp_dist = 1.0
+
+        # Distance to own body
+        if len(self.snake1.body) > 1:
+            body_dist = min(self._get_manhattan_distance(head, segment)
+                          for segment in self.snake1.body[1:])
+            norm_body_dist = body_dist / max_dist
+        else:
+            norm_body_dist = 1.0
+
+        features.extend([norm_food_dist, norm_wall_dist, norm_opp_dist, rel_x, rel_y, norm_body_dist])
+
+        # Distance to powerup
+        if self.powerup:
+            powerup_dist = self._get_manhattan_distance(head, self.powerup.position)
+            norm_powerup_dist = powerup_dist / max_dist
+        else:
+            norm_powerup_dist = 1.0
+        features.append(norm_powerup_dist)
+
+        return features
+
+    def _get_danger_features(self, snake_id):
+        """Get danger detection features."""
+        if not self.snake1 and snake_id == 1 or not self.snake2 and snake_id == 2:
+            return [0.0] * 8
+
+        # Immediate danger in each direction
+        immediate_dangers = self._get_danger_in_directions(snake_id)
+
+        # Future danger (2 steps ahead)
+        future_dangers = self._get_future_danger(snake_id)
+
+        return immediate_dangers + future_dangers
+
+    def _get_future_danger(self, snake_id=1):
+        """Calculate potential dangers two steps ahead."""
+        snake = self.snake1 if snake_id == 1 else self.snake2
+        other_snake = self.snake2 if snake_id == 1 else self.snake1
+
+        if not snake or not hasattr(snake, 'body') or not snake.body:
+            return [0.0] * 4
+
+        head = snake.body[0]
+        future_dangers = []
+
+        for direction in Direction.INDEX_TO_DIR:
+            # First step
+            dx, dy = Direction.get_components(direction)
+            next_pos = Point(head.x + dx, head.y + dy)
+
+            # Check if first step is within bounds
+            if (next_pos.x < 0 or next_pos.x >= self.grid_width or
+                next_pos.y < 0 or next_pos.y >= self.grid_height):
+                future_dangers.append(1.0)
+                continue
+
+            # Check if first step hits a wall or snake
+            if (self.maze.is_wall(next_pos.x, next_pos.y) or
+                (snake and hasattr(snake, 'body') and next_pos in snake.body[1:]) or
+                (other_snake and hasattr(other_snake, 'body') and next_pos in other_snake.body)):
+                future_dangers.append(1.0)
+                continue
+
+            # Second step - check all possible directions from next_pos
+            second_step_danger = False
+            for second_direction in Direction.INDEX_TO_DIR:
+                dx2, dy2 = Direction.get_components(second_direction)
+                future_pos = Point(next_pos.x + dx2, next_pos.y + dy2)
+
+                # Check if second step is within bounds
+                if (future_pos.x < 0 or future_pos.x >= self.grid_width or
+                    future_pos.y < 0 or future_pos.y >= self.grid_height):
+                    continue
+
+                # Check if at least one safe path exists
+                if (not self.maze.is_wall(future_pos.x, future_pos.y) and
+                    (not snake or not hasattr(snake, 'body') or future_pos not in snake.body[1:]) and
+                    (not other_snake or not hasattr(other_snake, 'body') or future_pos not in other_snake.body)):
+                    second_step_danger = False
+                    break
+                second_step_danger = True
+
+            future_dangers.append(1.0 if second_step_danger else 0.0)
+
+        return future_dangers
+
+    def _get_food_direction_features(self, head):
+        """Get food direction and current direction features."""
+        features = []
+
+        # Food direction one-hot
+        if self.food:
+            food_dir = self._get_relative_direction(head, self.food.position)
+        else:
+            food_dir = [0.0] * 4
+        features.extend(food_dir)
+
+        # Current direction one-hot
+        current_dir = [0.0] * 4
+        if self.snake1 and hasattr(self.snake1, 'direction'):
+            current_dir[Direction.DIR_TO_INDEX[self.snake1.direction]] = 1.0
+        elif self.snake2 and hasattr(self.snake2, 'direction'):
+            current_dir[Direction.DIR_TO_INDEX[self.snake2.direction]] = 1.0
+        features.extend(current_dir)
+
+        return features
+
+    def _get_wall_distance_features(self, head):
+        """Calculate distance to walls in each direction."""
+        distances = []
+        for direction in [(0, -1), (0, 1), (-1, 0), (1, 0)]:  # up, down, left, right
+            dist = 0
+            x, y = head.x, head.y
+            while 0 <= x < self.grid_width and 0 <= y < self.grid_height and not self.maze.is_wall(x, y):
+                dist += 1
+                x += direction[0]
+                y += direction[1]
+            distances.append(dist / max(self.grid_width, self.grid_height))
+        return distances
+
+    def _get_opponent_features(self, head, opponent):
+        """Calculate opponent-related features."""
+        if not opponent or not hasattr(opponent, 'body'):
+            return [0.0] * 4
+
+        opp_head = opponent.body[0]
+        rel_x = (opp_head.x - head.x) / self.grid_width
+        rel_y = (opp_head.y - head.y) / self.grid_height
+
+        # Opponent movement direction (normalized)
+        opp_dx = 0
+        opp_dy = 0
+        if len(opponent.body) > 1:
+            prev_head = opponent.body[1]
+            opp_dx = (opp_head.x - prev_head.x) / self.grid_width
+            opp_dy = (opp_head.y - prev_head.y) / self.grid_height
+
+        return [rel_x, rel_y, opp_dx, opp_dy]
+
+    def _get_powerup_features(self, head):
+        """Calculate powerup-related features."""
+        if not self.powerup:
+            return [0.0] * 3
+
+        dist = self._get_manhattan_distance(head, self.powerup.position)
+        norm_dist = dist / (self.grid_width + self.grid_height)
+
+        # Powerup type one-hot (currently only one type)
+        type_feature = 1.0 if self.powerup.type == 'extra_points' else 0.0
+
+        return [norm_dist, type_feature, float(self.powerup.points) / 10.0]
 
     def _get_manhattan_distance(self, point1, point2):
         return abs(point1.x - point2.x) + abs(point1.y - point2.y)
@@ -262,10 +603,10 @@ class SnakeEnv(gym.Env):
             distances.append(dist)
         return min(distances) if distances else self.grid_width
 
-    def _get_danger_in_directions(self, for_snake2=False):
-        """Get danger in each direction for either snake."""
-        snake = self.snake2 if for_snake2 else self.snake1
-        other_snake = self.snake1 if for_snake2 else self.snake2
+    def _get_danger_in_directions(self, snake_id):
+        """Get danger in each direction for specified snake."""
+        snake = self.snake1 if snake_id == 1 else self.snake2
+        other_snake = self.snake1 if snake_id == 1 else self.snake2
 
         if not snake or not hasattr(snake, 'body') or not snake.body:
             return [0.0] * 4
@@ -273,16 +614,28 @@ class SnakeEnv(gym.Env):
         head = snake.body[0]
         dangers = []
 
-        for direction in Direction.INDEX_TO_DIR:  # Fixed: Use INDEX_TO_DIR to iterate over directions
+        for direction in Direction.INDEX_TO_DIR:
             dx, dy = Direction.get_components(direction)
             next_pos = Point(head.x + dx, head.y + dy)
-            # Check if next position would result in collision
-            is_danger = (
-                self.maze.is_wall(next_pos.x, next_pos.y) or
-                next_pos in snake.body[1:] or
-                (other_snake and hasattr(other_snake, 'body') and next_pos in other_snake.body)
-            )
-            dangers.append(float(is_danger))
+
+            # Initialize danger as False
+            is_danger = False
+
+            # Check wall collision
+            if next_pos.x < 0 or next_pos.x >= self.grid_width or next_pos.y < 0 or next_pos.y >= self.grid_height:
+                is_danger = True
+            else:
+                # Check wall collision
+                is_danger = (
+                    self.maze.is_wall(next_pos.x, next_pos.y) or
+                    # Check self collision
+                    (snake and hasattr(snake, 'body') and next_pos in snake.body[1:]) or
+                    # Check opponent collision
+                    (other_snake and hasattr(other_snake, 'body') and next_pos in other_snake.body)
+                )
+
+            dangers.append(1.0 if is_danger else 0.0)
+
         return dangers
 
     def _get_relative_direction(self, from_point, to_point):
@@ -301,14 +654,61 @@ class SnakeEnv(gym.Env):
         return {
             "snake1_score": self.snake1.score if self.snake1 else 0,
             "snake2_score": self.snake2.score if self.snake2 else 0,
-            "steps": self._current_step,
+            "steps": self.episode_steps,
             "snake1_len": len(self.snake1.body) if self.snake1 and hasattr(self.snake1, 'body') else 0,
             "snake2_len": len(self.snake2.body) if self.snake2 and hasattr(self.snake2, 'body') else 0,
             "snake1_death_reason": self.snake1_death_reason,
             "snake2_death_reason": self.snake2_death_reason,
         }
 
-    def _place_item(self, item_class, **kwargs):
+    def _is_path_relatively_clear(self, start, end):
+        """Check if there's a relatively clear path between two points."""
+        # Get the direct path coordinates
+        x0, y0 = start.x, start.y
+        x1, y1 = end.x, end.y
+        dx = abs(x1 - x0)
+        dy = abs(y1 - y0)
+        x, y = x0, y0
+        n = 1 + dx + dy
+        x_inc = 1 if x1 > x0 else -1
+        y_inc = 1 if y1 > y0 else -1
+        error = dx - dy
+        dx *= 2
+        dy *= 2
+
+        # Check points along the path
+        path_points = []
+        obstacle_count = 0
+        for _ in range(min(n, 10)):  # Limit check to 10 steps
+            if self.maze.is_wall(x, y):
+                obstacle_count += 1
+            if obstacle_count > 0:  # Even stricter - no obstacles allowed in early training
+                return False
+
+            # Check for snake body parts blocking the path
+            if self.snake1 and hasattr(self.snake1, 'body'):
+                if Point(x, y) in self.snake1.body[1:]:
+                    return False
+            if self.snake2 and hasattr(self.snake2, 'body'):
+                if Point(x, y) in self.snake2.body:
+                    return False
+
+            path_points.append(Point(x, y))
+            if error > 0:
+                x += x_inc
+                error -= dy
+            else:
+                y += y_inc
+                error += dx
+
+        # Early training: ensure path is completely clear
+        if self.total_food_eaten < 10:
+            return obstacle_count == 0
+        # Later training: allow at most one obstacle
+        return obstacle_count <= 1
+
+    def _place_item(self, item_class, max_distance=None, **kwargs):
+        """Place an item in a valid position on the grid."""
         occupied = set()
         if self.snake1 and hasattr(self.snake1, 'get_positions'):
             occupied |= self.snake1.get_positions()
@@ -319,279 +719,156 @@ class SnakeEnv(gym.Env):
         if self.powerup:
             occupied.add(self.powerup.position)
 
-        pos = self.maze.get_random_empty_cell(occupied)
-        return item_class(pos, **kwargs)
+        # Early training adjustment: if no max_distance specified and it's food, use a dynamic distance
+        if max_distance is None and item_class == Food:
+            if self.total_food_eaten < 3:
+                max_distance = 2  # Start extremely close
+            elif self.total_food_eaten < 5:
+                max_distance = 3  # Very close
+            elif self.total_food_eaten < 10:
+                max_distance = 4  # Still quite close
+            elif self.total_food_eaten < 15:
+                max_distance = 6  # Gradually increase
 
-    def reset(self, seed=None, options=None):
-        super().reset(seed=seed)
-        self._current_step = 0
+        # Get all valid positions
+        valid_positions = []
+        for x in range(self.grid_width):
+            for y in range(self.grid_height):
+                pos = Point(x, y)
+                if not self.maze.is_wall(x, y) and pos not in occupied:
+                    if max_distance is not None and self.snake1:
+                        dist = self._get_manhattan_distance(self.snake1.body[0], pos)
+                        if dist <= max_distance:
+                            # Add position with priority based on distance and clear path
+                            path_clear = self._is_path_relatively_clear(self.snake1.body[0], pos)
+                            # In early training, only consider positions with clear paths
+                            if self.total_food_eaten < 10 and not path_clear:
+                                continue
+                            priority = 1.0 if path_clear else 0.5
+                            valid_positions.append((pos, dist, priority))
+                    else:
+                        valid_positions.append((pos, 0, 1.0))
 
-        # Reset death reasons
-        self.snake1_death_reason = ""
-        self.snake2_death_reason = ""
+        # If no valid positions found within max_distance, gradually increase the distance
+        original_max_distance = max_distance
+        while not valid_positions and max_distance is not None:
+            max_distance += 1
+            if max_distance > self.grid_width + self.grid_height or max_distance > 2 * original_max_distance:
+                break
+            for x in range(self.grid_width):
+                for y in range(self.grid_height):
+                    pos = Point(x, y)
+                    if not self.maze.is_wall(x, y) and pos not in occupied:
+                        dist = self._get_manhattan_distance(self.snake1.body[0], pos)
+                        if dist <= max_distance:
+                            path_clear = self._is_path_relatively_clear(self.snake1.body[0], pos)
+                            if self.total_food_eaten < 10 and not path_clear:
+                                continue
+                            priority = 1.0 if path_clear else 0.5
+                            valid_positions.append((pos, dist, priority))
 
-        # Only select random maze if no specific maze is loaded
-        if not self.maze or not self.maze.is_loaded:
-            maze_files = [f for f in os.listdir("mazes") if f.endswith(".txt")]
-            if maze_files:
-                selected_maze = random.choice(maze_files)
-                new_maze_path = os.path.join("mazes", selected_maze)
-                if new_maze_path != getattr(self.maze, 'filepath', None):
-                    self.maze = Maze(new_maze_path)
-                    if MAZE_ROTATION and random.random() < 0.5:
-                        self.maze.rotate_180()
+        if not valid_positions:
+            # If still no valid positions, try again without path clarity requirement
+            for x in range(self.grid_width):
+                for y in range(self.grid_height):
+                    pos = Point(x, y)
+                    if not self.maze.is_wall(x, y) and pos not in occupied:
+                        valid_positions.append((pos, 0, 0.5))
 
-        # Initialize snakes with random positions and directions
-        snake1_start = Point(self.grid_width // 4, self.grid_height // 2)
-        snake2_start = Point(3 * self.grid_width // 4, self.grid_height // 2)
+        if not valid_positions:
+            return None  # No valid positions available
 
-        # Create snakes with initial directions facing each other
-        self.snake1 = Snake(1, snake1_start, Direction.RIGHT, GREEN1, BLUE1)
-        self.snake2 = Snake(2, snake2_start, Direction.LEFT, GREEN2, BLUE2)
-
-        # Reset step counters and scores
-        self.snake1.steps_since_last_food = 0
-        self.snake2.steps_since_last_food = 0
-        self.snake1.score = 0
-        self.snake2.score = 0
-
-        # Place food and powerup
-        self.food = self._place_item(Food)
-
-        # Place powerup with some probability
-        if self.np_random.random() < POWERUP_SPAWN_CHANCE:
-            self.powerup = self._place_item(PowerUp)
-        else:
-            self.powerup = None
-
-        observation = self._get_obs()
-        info = self._get_info()
-
-        if self.render_mode == "human":
-            self._render_frame()
-
-        return observation, info
-
-    def _get_opponent_action(self):
-        """Determine Snake 2's action based on its policy."""
-        # If snake2 is dead, return None to prevent movement
-        if self.snake2_death_reason:
-            return None
-
-        # Get valid actions for snake2
-        valid_actions_mask = self._get_valid_actions_mask(for_snake2=True)
-        valid_indices = [i for i, is_valid in enumerate(valid_actions_mask) if is_valid]
-
-        # If there are no valid actions, mark snake2 as dead and return None
-        if not valid_indices:
-            self.snake2_death_reason = "no_valid_moves"
-            return None
-
-        if self.opponent_policy_type == 'stay_still':
-            # Try to maintain current direction if valid
-            try:
-                current_dir_index = Direction.DIR_TO_INDEX[self.snake2.direction]
-                if current_dir_index in valid_indices:
-                    return current_dir_index
-                # If current direction is not valid, choose a random valid one
-                return random.choice(valid_indices)
-            except KeyError:
-                return random.choice(valid_indices)
-
-        elif self.opponent_policy_type == 'random':
-            # Choose random valid action
-            return random.choice(valid_indices)
-
-        elif self.opponent_policy_type == 'basic_follow':
-            # Very simple: move towards food if possible, else move randomly avoiding walls/self
-            head = self.snake2.head
-            target = self.food.position if self.food else None
-
-            if target:
-                # Calculate distances for each valid move
-                best_action = -1
-                min_dist = float('inf')
-
-                for action in valid_indices:
-                    direction = Direction.INDEX_TO_DIR[action]
-                    dx, dy = Direction.get_components(direction)
-                    next_pos = Point(head.x + dx, head.y + dy)
-                    dist = abs(next_pos.x - target.x) + abs(next_pos.y - target.y)
-
-                    if dist < min_dist:
-                        min_dist = dist
-                        best_action = action
-
-                if best_action != -1:
-                    return best_action
-
-            # If no food or no path to food, choose random valid action
-            return random.choice(valid_indices)
-        else:
-            # Default to random valid action
-            return random.choice(valid_indices)
-
-    def step(self, action):
-        # Convert action to direction
-        direction = Direction.INDEX_TO_DIR[action]
-
-        # Initialize variables for reward calculation
-        snake1_ate_food = False
-        snake1_ate_powerup = False
-        snake1_died = False
-        snake2_died = False
-
-        # Get initial observation and info for potential early returns
-        observation = self._get_obs()
-        info = self._get_info()
-
-        # Check for food timeout for snake1
-        if self.snake1 and not self.snake1_death_reason and self.snake1.steps_since_last_food >= FOOD_TIMEOUT:
-            self.snake1_death_reason = "food_timeout"
-            snake1_died = True
-
-        # Process snake1's movement if it's not dead
-        if not self.snake1_death_reason:
-            # Check if the move is valid
-            if not self._is_valid_move(direction):
-                self.snake1_death_reason = "invalid_move"
-                snake1_died = True
+        # Sort positions by distance and priority
+        if item_class == Food:
+            valid_positions.sort(key=lambda x: (x[1], -x[2]))  # Sort by distance first, then by priority
+            if self.total_food_eaten < 15:
+                # In early training, always choose from the closest positions with highest priority
+                best_positions = [p for p in valid_positions[:4] if p[2] == 1.0]
+                if not best_positions:
+                    best_positions = valid_positions[:2]
+                pos = random.choice([p[0] for p in best_positions])
             else:
-                # Update snake1's direction and move
-                self.snake1.direction = direction
-                dx, dy = Direction.get_components(direction)
-                new_head = Point(self.snake1.body[0].x + dx, self.snake1.body[0].y + dy)
+                # Later in training, use a wider selection but still prefer clear paths
+                best_positions = [p for p in valid_positions[:8] if p[2] == 1.0]
+                if not best_positions:
+                    best_positions = valid_positions[:4]
+                pos = random.choice([p[0] for p in best_positions])
+        else:
+            pos = random.choice([p[0] for p in valid_positions])
 
-                # Check for collisions with walls
-                if self.maze.is_wall(new_head.x, new_head.y):
-                    self.snake1_death_reason = "collision_wall"
-                    snake1_died = True
-                # Check for self-collision
-                elif new_head in self.snake1.body[1:]:
-                    self.snake1_death_reason = "collision_self"
-                    snake1_died = True
-                # Check for collision with opponent
-                elif self.snake2 and new_head in self.snake2.body:
-                    self.snake1_death_reason = "collision_opponent"
-                    snake1_died = True
-                else:
-                    # Move is safe, update snake position
-                    self.snake1.body.insert(0, new_head)
+        return item_class(pos)
 
-                    # Check for food consumption
-                    if self.food and new_head == self.food.position:
-                        snake1_ate_food = True
-                        self.snake1.steps_since_last_food = 0
-                        self.food = None
-                        # Don't remove tail as snake grows
-                    else:
-                        self.snake1.body.pop()
-                        self.snake1.steps_since_last_food += 1
+    def _process_snake_movement(self, snake, action, snake_id):
+        """Process the movement of a specified snake."""
+        direction = Direction.INDEX_TO_DIR[action]
+        dx, dy = Direction.get_components(direction)
+        new_head = Point(snake.body[0].x + dx, snake.body[0].y + dy)
 
-                    # Check for powerup consumption
-                    if self.powerup and new_head == self.powerup.position:
-                        snake1_ate_powerup = True
-                        self.snake1.steps_since_last_food = 0  # Reset food timer
-                        self.snake1.score += 1  # Add score
-                        self.powerup = None
+        # Check for collisions
+        if self.maze.is_wall(new_head.x, new_head.y):
+            snake.death_reason = "collision_wall"
+            return True
+        elif new_head in snake.body[1:]:
+            snake.death_reason = "collision_self"
+            return True
+        elif snake_id == 1 and self.snake2 and not self.snake2.death_reason and new_head in self.snake2.body:
+            snake.death_reason = "collision_opponent"
+            return True
+        else:
+            # Move is safe, update snake position
+            snake.body.insert(0, new_head)
 
-        # Check for food timeout for snake2
-        if self.snake2 and not self.snake2_death_reason and self.snake2.steps_since_last_food >= FOOD_TIMEOUT:
-            snake2_died = True
-            self.snake2_death_reason = "food_timeout"
+            # Check for food consumption
+            if self.food and new_head == self.food.position:
+                snake.steps_since_last_food = 0
+                snake.score += 1
+                self.food = None
+            else:
+                snake.body.pop()
+                snake.steps_since_last_food += 1
 
-        # Process snake2's movement if it's not dead
-        if self.snake2 and not self.snake2_death_reason:
-            opponent_action = self._get_opponent_action()
-            if opponent_action is not None:
-                opp_direction = Direction.INDEX_TO_DIR[opponent_action]
-                dx, dy = Direction.get_components(opp_direction)
-                new_head = Point(self.snake2.body[0].x + dx, self.snake2.body[0].y + dy)
-
-                # Check for opponent death conditions
-                if self.maze.is_wall(new_head.x, new_head.y):
-                    snake2_died = True
-                    self.snake2_death_reason = "collision_wall"
-                elif new_head in self.snake2.body[1:]:
-                    snake2_died = True
-                    self.snake2_death_reason = "collision_self"
-                elif new_head in self.snake1.body:
-                    snake2_died = True
-                    self.snake2_death_reason = "collision_opponent"
-                else:
-                    self.snake2.direction = opp_direction
-                    self.snake2.body.insert(0, new_head)
-
-                    # Check if snake2 ate food
-                    if self.food and new_head == self.food.position:
-                        self.snake2.steps_since_last_food = 0
-                        self.snake2.score += 1  # Add score for food
-                        self.food = None
-                    # Check if snake2 ate powerup
-                    elif self.powerup and new_head == self.powerup.position:
-                        self.snake2.steps_since_last_food = 0  # Reset food timer
-                        self.snake2.score += 1  # Add score
-                        self.powerup = None
-                    else:
-                        self.snake2.body.pop()
-                        self.snake2.steps_since_last_food += 1
-            elif not self.snake2_death_reason:  # opponent_action is None but snake2 isn't marked as dead
-                snake2_died = True  # Mark snake2 as dead if it has no valid moves
-                self.snake2_death_reason = "no_valid_moves"
-
-        # Spawn new food if needed and at least one snake is still alive
-        if self.food is None and not (self.snake1_death_reason and self.snake2_death_reason):
-            self.food = self._place_item(Food)
-
-        # Spawn new powerup with small probability if at least one snake is still alive
-        if self.powerup is None and random.random() < POWERUP_SPAWN_CHANCE and not (self.snake1_death_reason and self.snake2_death_reason):
-            self.powerup = self._place_item(PowerUp)
-
-        # Update step counter
-        self._current_step += 1
-
-        # Get observation and info
-        observation = self._get_obs()
-        info = self._get_info()
-        info["snake1_death_reason"] = self.snake1_death_reason if snake1_died else ""
-        info["snake2_death_reason"] = self.snake2_death_reason if snake2_died else ""
-
-        # Calculate reward
-        reward = self._get_reward(snake1_ate_food, snake1_ate_powerup, snake1_died, snake2_died, info)
-
-        # Update death reasons if needed
-        if snake1_died and not self.snake1_death_reason:
-            self.snake1_death_reason = info["snake1_death_reason"]
-        if snake2_died and not self.snake2_death_reason:
-            self.snake2_death_reason = info["snake2_death_reason"]
-
-        # Check if episode is done (both snakes must be dead)
-        done = self.snake1_death_reason and self.snake2_death_reason
-
-        # Get valid actions mask for next step
-        info["valid_actions"] = self._get_valid_actions_mask()
-
-        return observation, reward, done, False, info
-
-    def _is_valid_move(self, new_direction, for_snake2=False):
-        """Check if the new direction is valid (not 180 degrees from current direction)."""
-        snake = self.snake2 if for_snake2 else self.snake1
-        if not snake:
             return False
 
-        current = snake.direction
-        opposite = {
+    def _check_consumables(self, snake, snake_id):
+        """Check for food and powerup consumption for a specified snake."""
+        ate_food = False
+        ate_powerup = False
+        if self.food and self.food.position == snake.body[0]:
+            ate_food = True
+            snake.steps_since_last_food = 0
+            snake.score += 1
+            self.food = None
+        elif self.powerup and self.powerup.position == snake.body[0]:
+            ate_powerup = True
+            snake.steps_since_last_food = 0
+            snake.score += 1
+            self.powerup = None
+        return ate_food, ate_powerup
+
+    def _is_valid_move(self, new_direction, snake_id):
+        """Check if a move is valid (not 180 degrees from current direction)."""
+        snake = self.snake1 if snake_id == 1 else self.snake2
+
+        if not snake or not hasattr(snake, 'direction'):
+            return True  # Any move is valid if snake doesn't exist or has no direction
+
+        current_dir = snake.direction
+
+        # Opposite direction pairs
+        opposites = {
             Direction.UP: Direction.DOWN,
             Direction.DOWN: Direction.UP,
             Direction.LEFT: Direction.RIGHT,
             Direction.RIGHT: Direction.LEFT
         }
-        return new_direction != opposite[current]
 
-    def _get_valid_actions_mask(self, for_snake2=False):
-        """Return a boolean mask of valid actions."""
-        snake = self.snake2 if for_snake2 else self.snake1
-        other_snake = self.snake1 if for_snake2 else self.snake2
+        # Move is invalid if it's opposite to current direction
+        return new_direction != opposites.get(current_dir, current_dir)
+
+    def _get_valid_actions_mask(self, snake_id):
+        """Return a boolean mask of valid actions for specified snake."""
+        snake = self.snake1 if snake_id == 1 else self.snake2
+        other_snake = self.snake1 if snake_id == 1 else self.snake2
 
         if not snake:
             return [False] * 4
@@ -599,7 +876,7 @@ class SnakeEnv(gym.Env):
         valid_actions = []
         for direction in Direction.INDEX_TO_DIR:
             # Check if move is valid (not 180 degrees)
-            is_valid = self._is_valid_move(direction, for_snake2=for_snake2)
+            is_valid = self._is_valid_move(direction, snake_id)
 
             # Check if move leads to immediate death
             if is_valid:
@@ -623,7 +900,7 @@ class SnakeEnv(gym.Env):
     def _render_frame(self):
         if self.screen is None and self.render_mode == "human":
             pygame.init()
-            pygame.display.set_caption("Snake RL")
+            pygame.display.set_caption("Snake RL - Two Learning Agents")
             self.screen = pygame.display.set_mode((self.window_width, self.window_height))
         if self.clock is None and self.render_mode == "human":
              self.clock = pygame.time.Clock()
@@ -689,92 +966,24 @@ class SnakeEnv(gym.Env):
             pygame.quit()
             self.screen = None
 
-    def _get_obs_for_snake2(self):
-        """Get observation specifically for snake 2."""
-        # Create grid representation, but swap roles
-        obs_grid = np.full((self.grid_height, self.grid_width), EMPTY, dtype=np.float32)
+    def _get_random_empty_position(self):
+        """Get a random empty position within the grid bounds."""
+        max_attempts = 100
+        for _ in range(max_attempts):
+            x = random.randint(1, self.grid_width - 2)  # Leave 1-cell border
+            y = random.randint(1, self.grid_height - 2)  # Leave 1-cell border
+            pos = Point(x, y)
 
-        # Add walls
-        for (x, y) in self.maze.barriers:
-            if 0 <= y < self.grid_height and 0 <= x < self.grid_width:
-                obs_grid[y, x] = WALL
+            # Check if position is empty
+            if (not self.maze.is_wall(x, y) and
+                (not self.snake1 or not hasattr(self.snake1, 'body') or pos not in self.snake1.body) and
+                (not self.snake2 or not hasattr(self.snake2, 'body') or pos not in self.snake2.body) and
+                (not self.food or not hasattr(self.food, 'position') or pos != self.food.position) and
+                (not self.powerup or not hasattr(self.powerup, 'position') or pos != self.powerup.position)):
+                return pos
 
-        # Add food
-        if self.food and 0 <= self.food.position.y < self.grid_height and 0 <= self.food.position.x < self.grid_width:
-            obs_grid[self.food.position.y, self.food.position.x] = FOOD_ITEM
-
-        # Add powerup
-        if self.powerup and 0 <= self.powerup.position.y < self.grid_height and 0 <= self.powerup.position.x < self.grid_width:
-            obs_grid[self.powerup.position.y, self.powerup.position.x] = POWERUP_ITEM
-
-        # Add snake 1 (as opponent)
-        if self.snake1:
-            for i, segment in enumerate(self.snake1.body):
-                if 0 <= segment.y < self.grid_height and 0 <= segment.x < self.grid_width:
-                    obs_grid[segment.y, segment.x] = SNAKE2_HEAD if i == 0 else SNAKE2_BODY
-
-        # Add snake 2 (as self)
-        if self.snake2:
-            for i, segment in enumerate(self.snake2.body):
-                if 0 <= segment.y < self.grid_height and 0 <= segment.x < self.grid_width:
-                    obs_grid[segment.y, segment.x] = SNAKE1_HEAD if i == 0 else SNAKE1_BODY
-
-        # Flatten the grid
-        flat_grid = obs_grid.flatten()
-
-        # Calculate additional features
-        additional_features = []
-
-        if USE_DISTANCE_FEATURES:
-            # Distance to food
-            food_dist = self._get_manhattan_distance(self.snake2.body[0], self.food.position)
-            # Distance to nearest wall
-            wall_dist = self._get_nearest_wall_distance(self.snake2.body[0])
-            # Distance to opponent head
-            opp_dist = self._get_manhattan_distance(self.snake2.body[0], self.snake1.body[0])
-            additional_features.extend([food_dist/self.grid_width, wall_dist/self.grid_width, opp_dist/self.grid_width])
-
-        if USE_DANGER_FEATURES:
-            # Check immediate danger in each direction
-            dangers = self._get_danger_in_directions(for_snake2=True)
-            additional_features.extend(dangers)
-
-        if USE_FOOD_DIRECTION:
-            # Relative direction to food
-            food_dir = self._get_relative_direction(self.snake2.body[0], self.food.position)
-            additional_features.extend(food_dir)
-
-        # Combine grid with additional features
-        return np.concatenate([flat_grid, np.array(additional_features, dtype=np.float32)])
-
-    def _get_future_danger(self):
-        """Check for danger two steps ahead in each direction."""
-        if not self.snake1:
-            return [0.0] * 4
-
-        dangers = []
-        head = self.snake1.body[0]
-        for direction in Direction.INDEX_TO_DIR:  # Fixed: Use INDEX_TO_DIR to iterate over directions
-            # First step
-            dx, dy = Direction.get_components(direction)
-            next_pos = Point(head.x + dx, head.y + dy)
-
-            # If first step is safe, check second step
-            if not (self.maze.is_wall(next_pos.x, next_pos.y) or
-                   next_pos in self.snake1.body[1:] or
-                   (self.snake2 and next_pos in self.snake2.body)):
-                # Check second step
-                next_next_pos = Point(next_pos.x + dx, next_pos.y + dy)
-                future_danger = float(
-                    self.maze.is_wall(next_next_pos.x, next_next_pos.y) or
-                    next_next_pos in self.snake1.body[1:] or
-                    (self.snake2 and next_next_pos in self.snake2.body)
-                )
-                dangers.append(future_danger)
-            else:
-                dangers.append(1.0)  # First step is already dangerous
-
-        return dangers
+        # If no empty position found, use a safe default
+        return Point(self.grid_width // 2, self.grid_height // 2)
 
     def update_maze(self, new_maze_file):
         """Update the current maze during training"""
@@ -785,7 +994,7 @@ class SnakeEnv(gym.Env):
             print(f"Maze {new_maze_file} is already loaded, resetting game state")
             try:
                 # Reset game state
-                self._current_step = 0
+                self.episode_steps = 0
                 self.snake1_death_reason = ""
                 self.snake2_death_reason = ""
 
@@ -837,7 +1046,7 @@ class SnakeEnv(gym.Env):
                 self.window_height = self.grid_height * self.block_size
 
                 # Reset game state
-                self._current_step = 0
+                self.episode_steps = 0
                 self.snake1_death_reason = ""
                 self.snake2_death_reason = ""
 
@@ -877,6 +1086,37 @@ class SnakeEnv(gym.Env):
             print(f"Failed to load maze from {new_maze_file}, keeping current maze")
             return False
 
+    def _get_opponent_action(self):
+        """Get action for non-learning opponent in single-agent mode."""
+        if not self.snake2 or self.snake2_death_reason:
+            return 0  # Default action if snake is dead
+
+        # Get valid actions
+        valid_actions = self._get_valid_actions_mask(2)
+        valid_indices = [i for i, valid in enumerate(valid_actions) if valid]
+
+        if not valid_indices:
+            return 0  # Default action if no valid moves
+
+        if self.opponent_policy == "stay_still":
+            # Try to maintain current direction, or choose random valid direction if current is invalid
+            if hasattr(self.snake2, 'direction'):
+                current_action = Direction.DIR_TO_INDEX[self.snake2.direction]
+                if current_action in valid_indices:
+                    return current_action
+
+        elif self.opponent_policy == "basic_follow":
+            # Move towards food if possible
+            if self.food and hasattr(self.snake2, 'body'):
+                head = self.snake2.body[0]
+                food_dir = self._get_relative_direction(head, self.food.position)
+                food_action = food_dir.index(1.0) if 1.0 in food_dir else None
+                if food_action in valid_indices:
+                    return food_action
+
+        # For "random" policy or if other policies' preferred actions aren't valid
+        return random.choice(valid_indices)
+
 # --- Basic Env Test ---
 if __name__ == '__main__':
     # Create dummy maze if needed
@@ -890,7 +1130,7 @@ if __name__ == '__main__':
 
     # Test with human rendering and random actions
     # env = SnakeEnv(render_mode="human", maze_file="mazes/default.txt", reward_approach="A2", opponent_policy='basic_follow')
-    env = SnakeEnv(render_mode="human", maze_file="mazes/maze1.txt", reward_approach="A2", opponent_policy='basic_follow') # Try a maze
+    env = SnakeEnv(render_mode="human", maze_file="mazes/maze1.txt", reward_approach="A2") # Try a maze
 
     # Use check_env from stable_baselines3
     from stable_baselines3.common.env_checker import check_env
@@ -906,8 +1146,8 @@ if __name__ == '__main__':
     step_count = 0
 
     while not terminated and not truncated:
-        action = env.action_space.sample()  # Take random action
-        obs, reward, terminated, truncated, info = env.step(action)
+        action_dict = {'snake1': env.action_space.sample(), 'snake2': env.action_space.sample()}  # Take random actions
+        obs, reward, terminated, truncated, info = env.step(action_dict)
         total_reward += reward
         step_count += 1
         # env.render() # Already called in step for human mode
