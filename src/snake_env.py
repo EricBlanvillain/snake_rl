@@ -278,6 +278,14 @@ class SnakeEnv(gym.Env):
 
     def _get_opponent_action(self):
         """Determine Snake 2's action based on its policy."""
+        # If snake is dead, return action that maintains current direction
+        if self.snake2_death_reason:
+            try:
+                current_dir_index = Direction.INDEX_TO_DIR.index(self.snake2.direction)
+                return current_dir_index
+            except ValueError:
+                return 0  # Default to UP if direction is invalid
+
         if self.opponent_policy_type == 'stay_still':
             # Find action index that corresponds to current direction
             try:
@@ -346,10 +354,13 @@ class SnakeEnv(gym.Env):
         # Execute one time step within the environment
         self._current_step += 1
 
-        # Move snakes
-        self.snake1.move(action)
+        # Move snakes (only if they're alive)
+        if not self.snake1_death_reason:  # Only move if snake1 is alive
+            self.snake1.move(action)
+
         opponent_action = self._get_opponent_action()
-        self.snake2.move(opponent_action)
+        if not self.snake2_death_reason:  # Only move if snake2 is alive
+            self.snake2.move(opponent_action)
 
         # Track what happened this step
         snake1_ate_food = False
@@ -357,67 +368,85 @@ class SnakeEnv(gym.Env):
         snake1_died = False
         snake2_died = False
 
-        # Check collisions with walls
-        if self.maze.is_wall(self.snake1.head.x, self.snake1.head.y):
-            snake1_died = True
-            self.snake1_death_reason = "collision_wall"
-        if self.maze.is_wall(self.snake2.head.x, self.snake2.head.y):
-            snake2_died = True
-            self.snake2_death_reason = "collision_wall"
+        # Check collisions with walls (only for living snakes)
+        if not self.snake1_death_reason:
+            if self.maze.is_wall(self.snake1.head.x, self.snake1.head.y):
+                snake1_died = True
+                self.snake1_death_reason = "collision_wall"
 
-        # Check snake self-collisions
-        if self.snake1.check_collision_self():
-            snake1_died = True
-            self.snake1_death_reason = "collision_self"
-        if self.snake2.check_collision_self():
-            snake2_died = True
-            self.snake2_death_reason = "collision_self"
+        if not self.snake2_death_reason:
+            if self.maze.is_wall(self.snake2.head.x, self.snake2.head.y):
+                snake2_died = True
+                self.snake2_death_reason = "collision_wall"
 
-        # Check snake-snake collisions
-        if self.snake1.head in self.snake2.body:
-            snake1_died = True
-            self.snake1_death_reason = "collision_opponent"
-        if self.snake2.head in self.snake1.body:
-            snake2_died = True
-            self.snake2_death_reason = "collision_opponent"
+        # Check snake self-collisions (only for living snakes)
+        if not self.snake1_death_reason:
+            if self.snake1.check_collision_self():
+                snake1_died = True
+                self.snake1_death_reason = "collision_self"
 
-        # Check food collision
-        if self.snake1.head == self.food.position:
+        if not self.snake2_death_reason:
+            if self.snake2.check_collision_self():
+                snake2_died = True
+                self.snake2_death_reason = "collision_self"
+
+        # Check snake-snake collisions (only for living snakes)
+        if not self.snake1_death_reason and not self.snake2_death_reason:
+            if self.snake1.head in self.snake2.body:
+                snake1_died = True
+                self.snake1_death_reason = "collision_opponent"
+            if self.snake2.head in self.snake1.body:
+                snake2_died = True
+                self.snake2_death_reason = "collision_opponent"
+
+        # Check food collision (only for living snakes)
+        if not snake1_died and not self.snake1_death_reason and self.snake1.head == self.food.position:
             snake1_ate_food = True
             self.snake1.grow()
             self.snake1.score += self.food.points
             self.food = self._place_item(Food)
 
-        if self.snake2.head == self.food.position:
+        if not snake2_died and not self.snake2_death_reason and self.snake2.head == self.food.position:
             self.snake2.grow()
             self.snake2.score += self.food.points
             self.food = self._place_item(Food)
 
-        # Check powerup collision
+        # Check powerup collision (only for living snakes)
         if self.powerup:
-            if self.snake1.head == self.powerup.position:
+            if not snake1_died and not self.snake1_death_reason and self.snake1.head == self.powerup.position:
                 snake1_ate_powerup = True
-                self.snake1.score += self.powerup.points
+                if self.powerup.type == 'extra_points':
+                    self.snake1.score += self.powerup.points
                 self.powerup = None
-            elif self.snake2.head == self.powerup.position:
-                self.snake2.score += self.powerup.points
+            elif not snake2_died and not self.snake2_death_reason and self.snake2.head == self.powerup.position:
+                if self.powerup.type == 'extra_points':
+                    self.snake2.score += self.powerup.points
                 self.powerup = None
 
-        # Randomly spawn new powerup
-        if not self.powerup and random.random() < POWERUP_CHANCE:
-            self.powerup = self._place_item(PowerUp)
-
-        # Get reward for this step
-        reward = self._get_reward(snake1_ate_food, snake1_ate_powerup, snake1_died, snake2_died, self._get_info())
-
-        # Check if episode is done
-        terminated = snake1_died or snake2_died
+        # Terminate if both snakes are dead or max steps reached
+        terminated = (snake1_died or bool(self.snake1_death_reason)) and (snake2_died or bool(self.snake2_death_reason))
         truncated = self._current_step >= MAX_STEPS_PER_EPISODE
+
+        # Get reward
+        reward = self._get_reward(snake1_ate_food, snake1_ate_powerup, snake1_died, snake2_died, {
+            "snake1_death_reason": self.snake1_death_reason,
+            "snake2_death_reason": self.snake2_death_reason
+        })
+
+        # Get observation
+        observation = self._get_obs()
+
+        # Get info
+        info = self._get_info()
+        info["snake1_died"] = snake1_died
+        info["snake2_died"] = snake2_died
+        info["snake1_death_reason"] = self.snake1_death_reason if snake1_died else ""
+        info["snake2_death_reason"] = self.snake2_death_reason if snake2_died else ""
 
         if self.render_mode == "human":
             self._render_frame()
 
-        return self._get_obs(), reward, terminated, truncated, self._get_info()
+        return observation, reward, terminated, truncated, info
 
     def render(self):
         if self.render_mode == "rgb_array":

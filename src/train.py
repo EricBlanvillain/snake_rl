@@ -75,7 +75,7 @@ class MazeCurriculumCallback(BaseCallback):
                 print(f"Required reward for next level: {self.required_reward}")
 
                 # Update the environment with the new maze
-                self.training_env.env_method("update_maze", [f"mazes/{self.current_maze}"])
+                self.training_env.env_method("update_maze", f"mazes/{self.current_maze}")
 
                 # Make it slightly harder to progress to the next level
                 self.required_reward += 1.0

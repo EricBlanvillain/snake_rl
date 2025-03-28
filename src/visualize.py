@@ -138,32 +138,46 @@ class RetroVisualizer:
         self.screen.blit(episode_surf, (self.screen_width//2 - episode_surf.get_width()//2, self.screen_height - 55))
         self.screen.blit(steps_surf, (self.screen_width - steps_surf.get_width() - 10, self.screen_height - 55))
 
-        # Draw death reason if it exists and hasn't timed out (5 seconds)
-        if self.death_reason and time.time() - self.death_display_time < 5:
-            # Create a semi-transparent background for death message
-            message = self.death_messages.get(self.death_reason, self.death_reason)
-            death_surf = self.font.render(f"Game Over: {message}", True, (255, 50, 50))
-            msg_bg = pygame.Surface((death_surf.get_width() + 20, death_surf.get_height() + 10))
-            msg_bg.fill((0, 0, 0))
-            msg_bg.set_alpha(180)
+        # Draw death messages if snakes have died and haven't timed out (5 seconds)
+        current_time = time.time()
+        if current_time - self.death_display_time < 5:
+            messages = []
 
-            # Position in center of screen
-            msg_x = self.screen_width//2 - death_surf.get_width()//2
-            msg_y = self.screen_height//2 - death_surf.get_height()//2
+            # Get death messages for both snakes if they exist
+            if hasattr(self.env, 'snake1_death_reason') and self.env.snake1_death_reason:
+                message1 = self.death_messages.get(self.env.snake1_death_reason, self.env.snake1_death_reason)
+                messages.append(f"Snake 1: {message1}")
 
-            # Draw background and text with glow effect
-            self.screen.blit(msg_bg, (msg_x - 10, msg_y - 5))
+            if hasattr(self.env, 'snake2_death_reason') and self.env.snake2_death_reason:
+                message2 = self.death_messages.get(self.env.snake2_death_reason, self.env.snake2_death_reason)
+                messages.append(f"Snake 2: {message2}")
 
-            # Add glow effect
-            glow_surf = pygame.Surface((death_surf.get_width() + 20, death_surf.get_height() + 20), pygame.SRCALPHA)
-            temp_surf = self.font.render(f"Game Over: {message}", True, (255, 50, 50))
-            temp_surf.set_alpha(50)
-            glow_rect = temp_surf.get_rect(center=(glow_surf.get_width()//2, glow_surf.get_height()//2))
-            for offset in range(5, 0, -1):
-                glow_surf.blit(temp_surf, glow_rect.inflate(offset*2, offset*2))
+            if messages:
+                # Create a semi-transparent background for death messages
+                total_height = len(messages) * 30 + 10  # 30 pixels per message + padding
+                msg_bg = pygame.Surface((self.screen_width - 40, total_height))
+                msg_bg.fill((0, 0, 0))
+                msg_bg.set_alpha(180)
 
-            self.screen.blit(glow_surf, (msg_x - 10, msg_y - 10))
-            self.screen.blit(death_surf, (msg_x, msg_y))
+                # Position in center of screen
+                msg_y = self.screen_height//2 - total_height//2
+                self.screen.blit(msg_bg, (20, msg_y))
+
+                # Draw each message
+                for i, message in enumerate(messages):
+                    death_surf = self.font.render(message, True, (255, 50, 50))
+                    msg_x = self.screen_width//2 - death_surf.get_width()//2
+
+                    # Add glow effect for each message
+                    glow_surf = pygame.Surface((death_surf.get_width() + 20, death_surf.get_height() + 20), pygame.SRCALPHA)
+                    temp_surf = self.font.render(message, True, (255, 50, 50))
+                    temp_surf.set_alpha(50)
+                    glow_rect = temp_surf.get_rect(center=(glow_surf.get_width()//2, glow_surf.get_height()//2))
+                    for offset in range(5, 0, -1):
+                        glow_surf.blit(temp_surf, glow_rect.inflate(offset*2, offset*2))
+
+                    self.screen.blit(glow_surf, (msg_x - 10, msg_y + i * 30))
+                    self.screen.blit(death_surf, (msg_x, msg_y + i * 30))
 
     def draw_pause_menu(self):
         """Draw the pause menu with retro punk styling."""
@@ -256,6 +270,7 @@ class RetroVisualizer:
             self.paused = False
             done = False
             return_to_maze_select = False
+            pause_screen_needs_update = False
 
             while not done:
                 self.clock.tick(FPS)
@@ -268,87 +283,70 @@ class RetroVisualizer:
                     elif event.type == pygame.KEYDOWN:
                         if event.key == pygame.K_ESCAPE or event.key == pygame.K_SPACE:
                             self.paused = not self.paused
+                            pause_screen_needs_update = True
 
-                # Handle pause menu buttons
-                if self.paused:
-                    for button in self.pause_buttons:
-                        if button.handle_event(event):
-                            if button.text == "Resume":
-                                self.paused = False
-                            elif button.text == "Select Maze":
-                                return_to_maze_select = True
-                                done = True
-                                break
-                            elif button.text == "Quit":
-                                pygame.quit()
-                                return
+                    # Handle pause menu buttons only if paused
+                    if self.paused:
+                        for button in self.pause_buttons:
+                            if button.handle_event(event):
+                                if button.text == "Resume":
+                                    self.paused = False
+                                    pause_screen_needs_update = False
+                                elif button.text == "Select Maze":
+                                    return_to_maze_select = True
+                                    done = True
+                                    break
+                                elif button.text == "Quit":
+                                    pygame.quit()
+                                    return
+                        # Mouse movement should trigger a pause screen update
+                        if event.type in (pygame.MOUSEMOTION, pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
+                            pause_screen_needs_update = True
 
                 if return_to_maze_select:
                     break
 
                 if self.paused:
-                    self.render()
-                    self.draw_pause_menu()
-                    pygame.display.flip()
+                    # Only render pause screen if it needs updating
+                    if pause_screen_needs_update:
+                        self.render()
+                        self.draw_pause_menu()
+                        pygame.display.flip()
+                        pause_screen_needs_update = False
                     continue
 
-                # Get actions from models
+                # Game logic when not paused
                 action1 = self.model1.predict(self.env._get_obs(), deterministic=True)[0] if self.model1 else 0
 
                 if self.model2:
-                    obs2 = self.env._get_obs()  # Both snakes use the same observation for now
+                    obs2 = self.env._get_obs()
                     action2 = self.model2.predict(obs2, deterministic=True)[0]
                     obs, reward, terminated, truncated, info = self.env.step((action1, action2))
                     done = terminated or truncated
-                    if done:
-                        self.death_reason = info.get('snake1_death_reason', 'Unknown')
+
+                    # Update death reasons for both snakes
+                    if info.get("snake1_died", False):
+                        self.death_reason = info.get("snake1_death_reason", "Unknown")
+                        self.death_display_time = time.time()
+                    if info.get("snake2_died", False):
+                        self.death_reason = info.get("snake2_death_reason", "Unknown")
                         self.death_display_time = time.time()
                 else:
                     obs, reward, terminated, truncated, info = self.env.step(action1)
                     done = terminated or truncated
-                    if done:
-                        self.death_reason = info.get('snake1_death_reason', 'Unknown')
+                    if info.get("snake1_died", False):
+                        self.death_reason = info.get("snake1_death_reason", "Unknown")
                         self.death_display_time = time.time()
 
                 self.steps += 1
                 self.render()
                 pygame.display.flip()
 
-                # If game is over, show the death message for a moment before continuing
+                # If both snakes are dead, show the death message for a moment before continuing
                 if done:
                     time.sleep(2)  # Show death message for 2 seconds before continuing
 
             if return_to_maze_select:
-                # Show maze selection menu
-                selection = self.menu.run()
-                if selection is None:  # User quit
-                    pygame.quit()
-                    return
-
-                # Extract maze path and model info from selection
-                maze_path = os.path.join("mazes", selection['maze'])
-                model_info = selection['model']
-
-                # Update environment with new maze
-                self.env.update_maze(maze_path)
-
-                # Load the selected model
-                print(f"Loading model from: {model_info['path']}")
-                model_name = model_info['name'].lower()
-
-                # Determine the algorithm type from the model name
-                if 'ppo' in model_name:
-                    self.model1 = PPO.load(model_info['path'])
-                elif 'dqn' in model_name:
-                    self.model1 = DQN.load(model_info['path'])
-                elif 'a2c' in model_name:
-                    self.model1 = A2C.load(model_info['path'])
-                else:
-                    # Default to PPO if unable to determine
-                    print("Unable to determine model type from name, defaulting to PPO")
-                    self.model1 = PPO.load(model_info['path'])
-
-                print("Model loaded successfully")
                 continue
 
             # Show game over screen and get next maze
