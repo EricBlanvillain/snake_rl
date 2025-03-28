@@ -1,0 +1,6 @@
+pygame
+numpy
+gymnasium
+stable-baselines3[extra]
+torch
+# Install separately for M1: pip3 install torch torchvision torchaudio
