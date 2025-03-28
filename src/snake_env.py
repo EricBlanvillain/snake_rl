@@ -13,7 +13,7 @@ from game_elements import Point, Direction, Snake, Food, PowerUp
 class SnakeEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": GAME_SPEED}
 
-    def __init__(self, render_mode=None, maze_file="mazes/default.txt", reward_approach=1, opponent_policy='stay_still'):
+    def __init__(self, render_mode=None, maze_file="mazes/maze_natural.txt", reward_approach=1, opponent_policy='stay_still'):
         super().__init__()
 
         self.grid_width = GRID_WIDTH
@@ -481,6 +481,95 @@ class SnakeEnv(gym.Env):
             pygame.display.quit()
             pygame.quit()
             self.screen = None
+
+    def _get_obs_for_snake2(self):
+        """Get observation specifically for snake 2."""
+        # Create grid representation, but swap roles
+        obs_grid = np.full((self.grid_height, self.grid_width), EMPTY, dtype=np.float32)
+
+        # Add walls
+        for (x, y) in self.maze.barriers:
+            if 0 <= y < self.grid_height and 0 <= x < self.grid_width:
+                obs_grid[y, x] = WALL
+
+        # Add food
+        if self.food and 0 <= self.food.position.y < self.grid_height and 0 <= self.food.position.x < self.grid_width:
+            obs_grid[self.food.position.y, self.food.position.x] = FOOD_ITEM
+
+        # Add powerup
+        if self.powerup and 0 <= self.powerup.position.y < self.grid_height and 0 <= self.powerup.position.x < self.grid_width:
+            obs_grid[self.powerup.position.y, self.powerup.position.x] = POWERUP_ITEM
+
+        # Add snake 1 (as opponent)
+        if self.snake1:
+            for i, segment in enumerate(self.snake1.body):
+                if 0 <= segment.y < self.grid_height and 0 <= segment.x < self.grid_width:
+                    obs_grid[segment.y, segment.x] = SNAKE2_HEAD if i == 0 else SNAKE2_BODY
+
+        # Add snake 2 (as self)
+        if self.snake2:
+            for i, segment in enumerate(self.snake2.body):
+                if 0 <= segment.y < self.grid_height and 0 <= segment.x < self.grid_width:
+                    obs_grid[segment.y, segment.x] = SNAKE1_HEAD if i == 0 else SNAKE1_BODY
+
+        # Flatten the grid
+        flat_grid = obs_grid.flatten()
+
+        # Calculate additional features
+        additional_features = []
+
+        if USE_DISTANCE_FEATURES:
+            # Distance to food
+            food_dist = self._get_manhattan_distance(self.snake2.body[0], self.food.position)
+            # Distance to nearest wall
+            wall_dist = self._get_nearest_wall_distance(self.snake2.body[0])
+            # Distance to opponent head
+            opp_dist = self._get_manhattan_distance(self.snake2.body[0], self.snake1.body[0])
+            additional_features.extend([food_dist/self.grid_width, wall_dist/self.grid_width, opp_dist/self.grid_width])
+
+        if USE_DANGER_FEATURES:
+            # Check immediate danger in each direction
+            dangers = self._get_danger_in_directions(for_snake2=True)
+            additional_features.extend(dangers)
+
+        if USE_FOOD_DIRECTION:
+            # Relative direction to food
+            food_dir = self._get_relative_direction(self.snake2.body[0], self.food.position)
+            additional_features.extend(food_dir)
+
+        # Combine grid with additional features
+        return np.concatenate([flat_grid, np.array(additional_features, dtype=np.float32)])
+
+    def _get_danger_in_directions(self, for_snake2=False):
+        """Get danger in each direction for either snake."""
+        snake = self.snake2 if for_snake2 else self.snake1
+        other_snake = self.snake1 if for_snake2 else self.snake2
+        head = snake.body[0]
+        dangers = []
+
+        for direction in Direction.INDEX_TO_DIR:
+            dx, dy = Direction.get_components(direction)
+            next_pos = Point(head.x + dx, head.y + dy)
+            # Check if next position would result in collision
+            is_danger = (
+                self.maze.is_wall(next_pos.x, next_pos.y) or
+                next_pos in snake.body[1:] or
+                (other_snake and next_pos in other_snake.body)
+            )
+            dangers.append(float(is_danger))
+        return dangers
+
+    def update_maze(self, new_maze_file):
+        """Update the current maze during training"""
+        print(f"Loading maze from {new_maze_file}")
+        self.maze = Maze(new_maze_file)
+        self.grid_width = self.maze.width
+        self.grid_height = self.maze.height
+        self.window_width = self.grid_width * BLOCK_SIZE
+        self.window_height = self.grid_height * BLOCK_SIZE
+
+        # Reset the game state
+        self.reset()
 
 # --- Basic Env Test ---
 if __name__ == '__main__':

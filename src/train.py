@@ -7,22 +7,24 @@ from stable_baselines3 import PPO, DQN, A2C
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
+import numpy as np
 
 from snake_env import SnakeEnv
 from constants import *
 
 class LearningRateScheduler(BaseCallback):
     """Custom callback for dynamic learning rate adjustment"""
-    def __init__(self, initial_lr, min_lr=1e-5, decay_factor=0.5, decay_steps=100000, verbose=0):
+    def __init__(self, initial_lr, min_lr=1e-5, decay_factor=0.5, decay_steps=100000, total_timesteps=1000000, verbose=0):
         super().__init__(verbose)
         self.initial_lr = initial_lr
         self.min_lr = min_lr
         self.decay_factor = decay_factor
         self.decay_steps = decay_steps
+        self.total_timesteps = total_timesteps
 
     def _on_step(self):
         # Calculate new learning rate
-        progress = self.num_timesteps / self.model.total_timesteps
+        progress = self.num_timesteps / self.total_timesteps
         decay_progress = min(1.0, self.num_timesteps / self.decay_steps)
         new_lr = max(
             self.min_lr,
@@ -31,6 +33,53 @@ class LearningRateScheduler(BaseCallback):
 
         # Update the learning rate
         self.model.learning_rate = new_lr
+        return True
+
+class MazeCurriculumCallback(BaseCallback):
+    """Implements curriculum learning for maze environments"""
+    def __init__(self, eval_freq=10000, verbose=0):
+        super().__init__(verbose)
+        self.eval_freq = eval_freq
+        self.current_level = 0
+        self.maze_levels = [
+            "maze_training.txt",    # Level 0: Easiest
+            "maze_natural.txt",     # Level 1: Medium
+            "maze_symmetric.txt",   # Level 2: Medium
+            "maze_arena.txt",       # Level 3: Medium-Hard
+            "maze_rooms.txt",       # Level 4: Hard
+            "maze_spiral.txt"       # Level 5: Hardest - requires precise long-term planning
+        ]
+        self.required_reward = -8.0  # Threshold to progress to next level
+        self.evaluation_rewards = []
+        self.current_maze = self.maze_levels[0]
+        self.last_mean_reward = -float('inf')
+
+    def _on_step(self):
+        # Every eval_freq steps, check if we should progress to a harder maze
+        if self.num_timesteps % self.eval_freq == 0:
+            # Get the mean reward from the model's episode info buffer
+            if len(self.model.ep_info_buffer) > 0:
+                rewards = [ep_info['r'] for ep_info in self.model.ep_info_buffer]
+                mean_reward = np.mean(rewards[-100:])
+                self.last_mean_reward = mean_reward
+            else:
+                mean_reward = self.last_mean_reward
+
+            # If performance is good enough and we haven't reached the hardest maze
+            if mean_reward > self.required_reward and self.current_level < len(self.maze_levels) - 1:
+                self.current_level += 1
+                self.current_maze = self.maze_levels[self.current_level]
+                print(f"\n--- Curriculum Progress ---")
+                print(f"Mean reward: {mean_reward:.2f}")
+                print(f"Progressing to maze level {self.current_level}: {self.current_maze}")
+                print(f"Required reward for next level: {self.required_reward}")
+
+                # Update the environment with the new maze
+                self.training_env.env_method("update_maze", [f"mazes/{self.current_maze}"])
+
+                # Make it slightly harder to progress to the next level
+                self.required_reward += 1.0
+
         return True
 
 class ExperimentConfig:
@@ -122,10 +171,11 @@ def train_agent(config):
     # Save configuration
     config.save_config()
 
-    # Environment kwargs
+    # Environment kwargs - start with the easiest maze
     env_kwargs = {
         'reward_approach': config.approach_num,
         'opponent_policy': config.opponent_policy,
+        'maze_file': 'mazes/maze_training.txt'  # Start with the training maze
     }
 
     # Create vectorized environment
@@ -184,9 +234,14 @@ def train_agent(config):
         initial_lr=config.learning_rate,
         min_lr=config.min_learning_rate,
         decay_factor=config.lr_decay_factor,
-        decay_steps=config.lr_decay_steps
+        decay_steps=config.lr_decay_steps,
+        total_timesteps=config.total_timesteps
     )
     callbacks.append(lr_scheduler)
+
+    # Add curriculum learning callback
+    curriculum_callback = MazeCurriculumCallback(eval_freq=10000)
+    callbacks.append(curriculum_callback)
 
     # Train the model
     try:
@@ -224,47 +279,29 @@ def train_agent(config):
     print(f"Use TensorBoard to view logs: tensorboard --logdir {log_dir}")
 
 if __name__ == '__main__':
-    # Example configurations for different experiments
-    configs = [
-        # Baseline configuration with learning rate decay
-        ExperimentConfig(
-            run_name="dqn_with_lr_decay",
-            algorithm="DQN",
-            approach_num=2,
-            total_timesteps=1_500_000,
-            learning_rate=3e-4,
-            min_learning_rate=5e-5,
-            lr_decay_factor=0.5,
-            lr_decay_steps=400000  # Start decay after this many steps
-        ),
+    # Configuration for training with diverse mazes
+    config = ExperimentConfig(
+        run_name="diverse_mazes_dqn",
+        algorithm="DQN",
+        approach_num=2,  # Using the sophisticated reward structure
+        total_timesteps=2_000_000,  # Increased timesteps for better maze exploration
+        n_envs=1,
+        opponent_policy='basic_follow',
+        learning_rate=3e-4,
+        min_learning_rate=5e-5,
+        lr_decay_factor=0.5,
+        lr_decay_steps=500000,  # Slower decay for better adaptation
+        batch_size=256,  # Larger batch size for diverse experiences
+        net_arch=[512, 256, 128],  # Deeper network for complex maze patterns
+        buffer_size=200_000,  # Larger buffer for diverse experiences
+        learning_starts=20_000,  # More initial exploration
+        exploration_fraction=0.3,  # More exploration
+        exploration_final_eps=0.05,
+        use_maze_rotation=True,  # Enable maze rotation for better generalization
+        use_distance_features=True,
+        use_danger_features=True,
+        use_food_direction=True
+    )
 
-        # Faster learning configuration
-        ExperimentConfig(
-            run_name="fast_learning_dqn",
-            algorithm="DQN",
-            approach_num=2,
-            total_timesteps=1_500_000,
-            learning_rate=1e-3,
-            min_learning_rate=1e-4,
-            lr_decay_factor=0.6,
-            lr_decay_steps=300000,
-            batch_size=256,
-            exploration_fraction=0.3
-        ),
-
-        # PPO configuration
-        ExperimentConfig(
-            run_name="ppo_with_lr_decay",
-            algorithm="PPO",
-            approach_num=2,
-            total_timesteps=1_000_000,
-            learning_rate=3e-4,
-            min_learning_rate=5e-5,
-            lr_decay_factor=0.5,
-            lr_decay_steps=300000,
-            net_arch=[128, 128]
-        )
-    ]
-
-    # Train with the first configuration (comment/uncomment as needed)
-    train_agent(configs[0])
+    # Train with the new configuration
+    train_agent(config)
