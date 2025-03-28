@@ -31,7 +31,12 @@ case "$1" in
         ;;
     "tensorboard")
         echo "Starting TensorBoard..."
-        tensorboard --logdir=runs/
+        pkill tensorboard || true  # Kill any existing tensorboard processes
+        sleep 1
+        # Clean up any existing event files in /tmp
+        rm -rf /tmp/tensorboard_* || true
+        # Start tensorboard with more aggressive reload settings
+        tensorboard --logdir=runs --reload_multifile=true --reload_interval=1 --samples_per_plugin=scalar=0 --purge_orphaned_data=true --max_reload_threads=8 --bind_all --load_fast=false
         ;;
     "help")
         show_usage
