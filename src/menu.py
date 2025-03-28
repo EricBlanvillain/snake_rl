@@ -4,6 +4,7 @@ import json
 from constants import *
 import numpy as np
 import time
+from datetime import datetime
 
 class Button:
     def __init__(self, x, y, width, height, text, color):
@@ -156,21 +157,60 @@ class Menu:
         return models
 
     def load_leaderboard(self):
+        """Load leaderboard and convert old format scores if needed"""
         try:
             with open("leaderboard.json", "r") as f:
-                return json.load(f)
-        except:
-            return []
+                data = json.load(f)
+                # Initialize per-maze leaderboards if not present
+                if isinstance(data, list):
+                    # Convert old format (list) to new format (dict with maze types)
+                    converted_data = {}
+                    for maze_file in self.maze_files:
+                        converted_data[maze_file] = []
+
+                    # Add old scores to 'maze_natural.txt' (default maze)
+                    for entry in data:
+                        if isinstance(entry, int):
+                            converted_data['maze_natural.txt'].append({
+                                'score': entry,
+                                'timestamp': 'Legacy Score'
+                            })
+                        else:
+                            converted_data['maze_natural.txt'].append(entry)
+                    return converted_data
+                return data
+        except Exception as e:
+            print(f"Error loading leaderboard: {e}")
+            # Initialize empty leaderboards for each maze
+            return {maze_file: [] for maze_file in self.maze_files}
 
     def save_leaderboard(self):
         with open("leaderboard.json", "w") as f:
             json.dump(self.leaderboard, f)
 
-    def add_score(self, score):
-        self.leaderboard.append(score)
-        self.leaderboard.sort(reverse=True)
-        self.leaderboard = self.leaderboard[:10]  # Keep top 10
-        self.save_leaderboard()
+    def add_score(self, score, maze_type, snake_color='green'):
+        """Add a new score to the leaderboard with timestamp and snake color"""
+        try:
+            # Ensure score is an integer
+            score_value = int(score)
+            score_entry = {
+                'score': score_value,
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'snake_color': snake_color
+            }
+
+            # Initialize maze type if not present
+            if maze_type not in self.leaderboard:
+                self.leaderboard[maze_type] = []
+
+            self.leaderboard[maze_type].append(score_entry)
+            # Sort by score in descending order
+            self.leaderboard[maze_type].sort(key=lambda x: x['score'], reverse=True)
+            self.leaderboard[maze_type] = self.leaderboard[maze_type][:10]  # Keep top 10
+            self.save_leaderboard()
+            print(f"Added score {score_value} for maze {maze_type} with snake color {snake_color}")
+        except Exception as e:
+            print(f"Error adding score: {e}")
 
     def draw_model_select(self):
         """Draw the model selection screen with retro punk styling."""
@@ -379,15 +419,16 @@ class Menu:
     def draw_leaderboard(self):
         self.screen.fill((0, 0, 20))
 
-        # Draw title with neon effect
-        title_text = "LEADERBOARD"
+        # Draw title with neon effect - use shorter maze name
+        maze_name = self.maze_files[self.selected_maze].replace('maze_', '').replace('.txt', '')
+        title_text = f"LEADERBOARD - {maze_name}"
         title_color = (0, 255, 200)  # Same neon color as other screens
-        title = self.title_font.render(title_text, True, title_color)
+        title = pygame.font.SysFont('arial', 42).render(title_text, True, title_color)
         title_rect = title.get_rect(center=(self.width//2, 50))
 
         # Add glow effect to title
         glow_surf = pygame.Surface((title.get_width() + 20, title.get_height() + 20), pygame.SRCALPHA)
-        temp_surf = self.title_font.render(title_text, True, title_color)
+        temp_surf = pygame.font.SysFont('arial', 42).render(title_text, True, title_color)
         temp_surf.set_alpha(50)
         glow_rect = temp_surf.get_rect(center=(glow_surf.get_width()//2, glow_surf.get_height()//2))
         for offset in range(5, 0, -1):
@@ -396,35 +437,90 @@ class Menu:
         self.screen.blit(glow_surf, (title_rect.x - 10, title_rect.y - 10))
         self.screen.blit(title, title_rect)
 
+        # Draw navigation hint
+        hint_text = "↑↓ to change maze"
+        hint_color = (100, 100, 150)
+        hint_surf = pygame.font.SysFont('arial', 20).render(hint_text, True, hint_color)
+        hint_rect = hint_surf.get_rect(center=(self.width//2, 90))
+        self.screen.blit(hint_surf, hint_rect)
+
+        # Draw column headers
+        header_y = 120
+        header_color = (150, 150, 200)
+        rank_header = pygame.font.SysFont('arial', 24).render("RANK", True, header_color)
+        score_header = pygame.font.SysFont('arial', 24).render("SCORE", True, header_color)
+        snake_header = pygame.font.SysFont('arial', 24).render("SNAKE", True, header_color)
+        date_header = pygame.font.SysFont('arial', 24).render("DATE & TIME", True, header_color)
+
+        # Calculate column positions
+        rank_x = self.width//5 - 80
+        score_x = 2*self.width//5 - 50
+        snake_x = 3*self.width//5 - 20
+        date_x = 4*self.width//5 + 20
+
+        # Draw headers
+        self.screen.blit(rank_header, (rank_x, header_y))
+        self.screen.blit(score_header, (score_x, header_y))
+        self.screen.blit(snake_header, (snake_x, header_y))
+        self.screen.blit(date_header, (date_x - date_header.get_width()//2, header_y))
+
+        # Get current maze's leaderboard
+        current_maze = self.maze_files[self.selected_maze]
+        maze_scores = self.leaderboard.get(current_maze, [])
+
         # Draw scores with neon effect
-        base_score_color = (200, 200, 255)  # Light blue for scores
-        for i, score in enumerate(self.leaderboard):
+        start_y = header_y + 40
+        spacing = 40
+        base_score_color = (200, 200, 255)
+
+        for i, entry in enumerate(maze_scores):
             # Add pulsing effect for top 3 scores
             if i < 3:
                 pulse = int(abs(np.sin(time.time() * 4)) * 50)
                 if i == 0:
-                    score_color = (min(200 + pulse, 255), 200, 255)
+                    score_color = (min(200 + pulse, 255), 200, 255)  # Gold
                 elif i == 1:
-                    score_color = (200, min(200 + pulse, 255), 255)
+                    score_color = (200, min(200 + pulse, 255), 255)  # Silver
                 else:
-                    score_color = (200, 200, min(255 + pulse, 255))
+                    score_color = (200, 200, min(255 + pulse, 255))  # Bronze
             else:
                 score_color = base_score_color
 
-            text = self.font.render(f"{i+1}. {score}", True, score_color)
-            text_rect = text.get_rect(center=(self.width//2, 150 + i * 40))
+            # Render rank
+            rank_text = self.font.render(f"#{i+1}", True, score_color)
+            rank_rect = rank_text.get_rect(left=rank_x, centery=start_y + i * spacing)
+
+            # Render score
+            score_text = self.font.render(f"{entry['score']}", True, score_color)
+            score_rect = score_text.get_rect(left=score_x, centery=start_y + i * spacing)
+
+            # Render snake indicator (circle with snake color)
+            snake_color = entry.get('snake_color', 'green')  # Default to green for legacy scores
+            snake_color_rgb = (0, 255, 100) if snake_color == 'green' else (255, 50, 50)  # Green or Red
+            snake_circle = pygame.Surface((24, 24), pygame.SRCALPHA)
+            pygame.draw.circle(snake_circle, snake_color_rgb, (12, 12), 10)
+            snake_rect = snake_circle.get_rect(centerx=snake_x + 12, centery=start_y + i * spacing)
+
+            # Render date/time
+            date_text = pygame.font.SysFont('arial', 24).render(entry['timestamp'], True, (150, 150, 150))
+            date_rect = date_text.get_rect(centerx=date_x, centery=start_y + i * spacing)
 
             # Add glow effect for top 3 scores
             if i < 3:
-                glow_surf = pygame.Surface((text.get_width() + 20, text.get_height() + 20), pygame.SRCALPHA)
-                temp_text = self.font.render(f"{i+1}. {score}", True, score_color)
-                temp_text.set_alpha(30)
-                glow_rect = temp_text.get_rect(center=(glow_surf.get_width()//2, glow_surf.get_height()//2))
-                for offset in range(3, 0, -1):
-                    glow_surf.blit(temp_text, glow_rect.inflate(offset*2, offset*2))
-                self.screen.blit(glow_surf, (text_rect.x - 10, text_rect.y - 10))
+                for text, rect in [(rank_text, rank_rect), (score_text, score_rect)]:
+                    glow_surf = pygame.Surface((text.get_width() + 20, text.get_height() + 20), pygame.SRCALPHA)
+                    temp_text = text.copy()
+                    temp_text.set_alpha(30)
+                    glow_rect = temp_text.get_rect(center=(glow_surf.get_width()//2, glow_surf.get_height()//2))
+                    for offset in range(3, 0, -1):
+                        glow_surf.blit(temp_text, glow_rect.inflate(offset*2, offset*2))
+                    self.screen.blit(glow_surf, (rect.x - 10, rect.y - 10))
 
-            self.screen.blit(text, text_rect)
+            # Draw the text and snake indicator
+            self.screen.blit(rank_text, rank_rect)
+            self.screen.blit(score_text, score_rect)
+            self.screen.blit(snake_circle, snake_rect)
+            self.screen.blit(date_text, date_rect)
 
         # Draw "Play Again" button with neon green
         self.start_button.text = "Play Again"
@@ -446,7 +542,7 @@ class Menu:
                             self.selected_model = (self.selected_model - 1) % len(self.models)
                         elif event.key == pygame.K_DOWN:
                             self.selected_model = (self.selected_model + 1) % len(self.models)
-                    elif self.state == "maze_select":
+                    elif self.state == "maze_select" or self.state == "leaderboard":
                         if event.key == pygame.K_UP:
                             self.selected_maze = (self.selected_maze - 1) % len(self.maze_files)
                         elif event.key == pygame.K_DOWN:
@@ -465,8 +561,9 @@ class Menu:
                     elif self.state == "game_over":
                         self.state = "leaderboard"
                     else:  # leaderboard
-                        self.state = "model_select"
-                        self.start_button.text = "Select Model"
+                        # Return to maze selection with the same model
+                        self.state = "maze_select"
+                        self.start_button.text = "Start Game"
 
             if self.state == "model_select":
                 self.draw_model_select()
@@ -482,8 +579,38 @@ class Menu:
 
         return None
 
-    def show_game_over(self, score):
+    def show_game_over(self, score, snake_color='green'):
+        """Show game over screen and add score to leaderboard."""
         self.final_score = score
-        self.add_score(score)
+        self.add_score(score, self.maze_files[self.selected_maze], snake_color)
         self.state = "game_over"
         return self.run()
+
+    def run_maze_only(self):
+        """Run the menu showing only maze selection."""
+        running = True
+        clock = pygame.time.Clock()
+        self.state = "maze_select"  # Force maze selection state
+
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return None
+
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_UP:
+                        self.selected_maze = (self.selected_maze - 1) % len(self.maze_files)
+                    elif event.key == pygame.K_DOWN:
+                        self.selected_maze = (self.selected_maze + 1) % len(self.maze_files)
+
+                if self.start_button.handle_event(event):
+                    return {
+                        'maze': self.maze_files[self.selected_maze]
+                    }
+
+            # Draw the maze selection screen
+            self.draw_maze_select()
+            pygame.display.flip()
+            clock.tick(60)
+
+        return None

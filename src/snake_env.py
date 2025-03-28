@@ -235,13 +235,16 @@ class SnakeEnv(gym.Env):
         self.snake1_death_reason = ""
         self.snake2_death_reason = ""
 
-        # Select random maze if multiple available
-        maze_files = [f for f in os.listdir("mazes") if f.endswith(".txt")]
-        if maze_files:
-            selected_maze = random.choice(maze_files)
-            self.maze = Maze(os.path.join("mazes", selected_maze))
-            if MAZE_ROTATION and random.random() < 0.5:
-                self.maze.rotate_180()
+        # Only select random maze if no specific maze is loaded
+        if not self.maze or not self.maze.is_loaded:
+            maze_files = [f for f in os.listdir("mazes") if f.endswith(".txt")]
+            if maze_files:
+                selected_maze = random.choice(maze_files)
+                new_maze_path = os.path.join("mazes", selected_maze)
+                if new_maze_path != getattr(self.maze, 'filepath', None):
+                    self.maze = Maze(new_maze_path)
+                    if MAZE_ROTATION and random.random() < 0.5:
+                        self.maze.rotate_180()
 
         # Place snakes (ensure they don't start on walls or overlap)
         while True:
@@ -262,7 +265,6 @@ class SnakeEnv(gym.Env):
                     break
         start_dir2 = random.choice(list(Direction.INDEX_TO_DIR))
         self.snake2 = Snake(2, (start_x2, start_y2), start_dir2, GREEN2, BLUE2)
-
 
         # Place initial food and powerup
         self.food = self._place_item(Food)
@@ -591,14 +593,103 @@ class SnakeEnv(gym.Env):
     def update_maze(self, new_maze_file):
         """Update the current maze during training"""
         print(f"Loading maze from {new_maze_file}")
-        self.maze = Maze(new_maze_file)
-        self.grid_width = self.maze.width
-        self.grid_height = self.maze.height
-        self.window_width = self.grid_width * BLOCK_SIZE
-        self.window_height = self.grid_height * BLOCK_SIZE
 
-        # Reset the game state
-        self.reset()
+        # Don't reload maze if it's the same, but still reset game state
+        if self.maze and self.maze.filepath == new_maze_file and self.maze.is_loaded:
+            print(f"Maze {new_maze_file} is already loaded, resetting game state")
+            try:
+                # Reset game state
+                self._current_step = 0
+                self.snake1_death_reason = ""
+                self.snake2_death_reason = ""
+
+                # Place snakes in valid positions
+                while True:
+                    start_x1 = random.randint(1, self.grid_width - 2)
+                    start_y1 = random.randint(1, self.grid_height - 2)
+                    if not self.maze.is_wall(start_x1, start_y1):
+                        break
+                self.snake1 = Snake(1, (start_x1, start_y1), random.choice(list(Direction.INDEX_TO_DIR)), GREEN1, BLUE1)
+
+                while True:
+                    start_x2 = random.randint(1, self.grid_width - 2)
+                    start_y2 = random.randint(1, self.grid_height - 2)
+                    if not self.maze.is_wall(start_x2, start_y2) and \
+                       (abs(start_x1 - start_x2) + abs(start_y1 - start_y2)) > 3 and \
+                       Point(start_x2, start_y2) not in self.snake1.get_positions():
+                        break
+                self.snake2 = Snake(2, (start_x2, start_y2), random.choice(list(Direction.INDEX_TO_DIR)), GREEN2, BLUE2)
+
+                # Place food and powerup
+                self.food = self._place_item(Food)
+                self.powerup = self._place_item(PowerUp) if random.random() < 0.5 else None
+
+                print(f"Successfully reset game state with existing maze")
+                return True
+            except Exception as e:
+                print(f"Error resetting game state: {str(e)}")
+                return False
+
+        # Validate the new maze file path
+        if not os.path.exists(new_maze_file):
+            print(f"Error: Maze file '{new_maze_file}' does not exist")
+            return False
+
+        # Create a new maze instance with the new file
+        new_maze = Maze(new_maze_file)
+        if new_maze.is_loaded:  # Only update if the maze loaded successfully
+            # Store current maze as backup in case reset fails
+            old_maze = self.maze
+            old_width = self.grid_width
+            old_height = self.grid_height
+
+            try:
+                self.maze = new_maze
+                self.grid_width = self.maze.width
+                self.grid_height = self.maze.height
+                self.window_width = self.grid_width * self.block_size
+                self.window_height = self.grid_height * self.block_size
+
+                # Reset game state
+                self._current_step = 0
+                self.snake1_death_reason = ""
+                self.snake2_death_reason = ""
+
+                # Place snakes in valid positions
+                while True:
+                    start_x1 = random.randint(1, self.grid_width - 2)
+                    start_y1 = random.randint(1, self.grid_height - 2)
+                    if not self.maze.is_wall(start_x1, start_y1):
+                        break
+                self.snake1 = Snake(1, (start_x1, start_y1), random.choice(list(Direction.INDEX_TO_DIR)), GREEN1, BLUE1)
+
+                while True:
+                    start_x2 = random.randint(1, self.grid_width - 2)
+                    start_y2 = random.randint(1, self.grid_height - 2)
+                    if not self.maze.is_wall(start_x2, start_y2) and \
+                       (abs(start_x1 - start_x2) + abs(start_y1 - start_y2)) > 3 and \
+                       Point(start_x2, start_y2) not in self.snake1.get_positions():
+                        break
+                self.snake2 = Snake(2, (start_x2, start_y2), random.choice(list(Direction.INDEX_TO_DIR)), GREEN2, BLUE2)
+
+                # Place food and powerup
+                self.food = self._place_item(Food)
+                self.powerup = self._place_item(PowerUp) if random.random() < 0.5 else None
+
+                print(f"Successfully updated maze to {new_maze_file}")
+                return True
+            except Exception as e:
+                # Restore old maze if reset fails
+                print(f"Error during maze update: {str(e)}")
+                self.maze = old_maze
+                self.grid_width = old_width
+                self.grid_height = old_height
+                self.window_width = self.grid_width * self.block_size
+                self.window_height = self.grid_height * self.block_size
+                return False
+        else:
+            print(f"Failed to load maze from {new_maze_file}, keeping current maze")
+            return False
 
 # --- Basic Env Test ---
 if __name__ == '__main__':

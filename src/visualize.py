@@ -134,9 +134,17 @@ class RetroVisualizer:
         episode_surf = self.font.render(episode_text, True, COLORS['text'])
         steps_surf = self.font.render(steps_text, True, COLORS['text'])
 
+        # Get current maze name and create subtle text
+        maze_name = os.path.basename(self.env.maze.filepath) if hasattr(self.env.maze, 'filepath') else "Unknown Maze"
+        maze_font = pygame.font.SysFont('arial', 18)  # Smaller font for subtlety
+        maze_text = maze_font.render(maze_name, True, (100, 100, 120))  # Subtle gray color
+        maze_text.set_alpha(150)  # Make it semi-transparent
+
+        # Position all elements
         self.screen.blit(score_surf, (10, self.screen_height - 55))
         self.screen.blit(episode_surf, (self.screen_width//2 - episode_surf.get_width()//2, self.screen_height - 55))
         self.screen.blit(steps_surf, (self.screen_width - steps_surf.get_width() - 10, self.screen_height - 55))
+        self.screen.blit(maze_text, (self.screen_width//2 - maze_text.get_width()//2, self.screen_height - 25))  # Position at bottom
 
         # Draw death messages if snakes have died and haven't timed out (5 seconds)
         current_time = time.time()
@@ -232,38 +240,18 @@ class RetroVisualizer:
 
     def run(self, num_episodes=1):
         """Run the visualization for a specified number of episodes."""
-        menu = Menu(self.screen_width, self.screen_height)
+        menu = self.menu  # Use the existing menu instance
 
         while True:
-            # Get maze and model selection from menu
-            selection = menu.run()
-            if selection is None:  # User quit
-                return
-
-            # Extract maze path and model info from selection
-            maze_path = os.path.join("mazes", selection['maze'])
-            model_info = selection['model']
-
-            # Update environment with new maze
+            # Update environment with current maze
+            maze_path = os.path.join("mazes", menu.maze_files[menu.selected_maze])
+            print(f"Loading maze: {maze_path}")
             self.env.update_maze(maze_path)
 
-            # Load the selected model
-            print(f"Loading model from: {model_info['path']}")
-            model_name = model_info['name'].lower()
-
-            # Determine the algorithm type from the model name
-            if 'ppo' in model_name:
-                self.model1 = PPO.load(model_info['path'])
-            elif 'dqn' in model_name:
-                self.model1 = DQN.load(model_info['path'])
-            elif 'a2c' in model_name:
-                self.model1 = A2C.load(model_info['path'])
-            else:
-                # Default to PPO if unable to determine
-                print("Unable to determine model type from name, defaulting to PPO")
-                self.model1 = PPO.load(model_info['path'])
-
-            print("Model loaded successfully")
+            # Verify maze was loaded correctly
+            if not self.env.maze.is_loaded or self.env.maze.filepath != maze_path:
+                print(f"Error: Failed to load maze {maze_path}")
+                return
 
             self.episode = 0
             self.steps = 0
@@ -347,16 +335,43 @@ class RetroVisualizer:
                     time.sleep(2)  # Show death message for 2 seconds before continuing
 
             if return_to_maze_select:
+                # Show maze selection menu
+                selection = menu.run_maze_only()  # New method to show only maze selection
+                if selection is None:  # User quit
+                    return
+                maze_path = os.path.join("mazes", selection['maze'])
                 continue
 
             # Show game over screen and get next maze
-            next_maze = self.menu.show_game_over(self.env.snake1.score)
+            if self.env.snake2:
+                # For two-snake game, determine winner based on death reasons and scores
+                snake1_died = bool(self.env.snake1_death_reason)
+                snake2_died = bool(self.env.snake2_death_reason)
+                snake1_score = self.env.snake1.score
+                snake2_score = self.env.snake2.score
+
+                # Determine winner based on death and score
+                snake2_wins = (
+                    (snake1_died and not snake2_died) or  # Only snake1 died
+                    (snake1_died and snake2_died and snake2_score > snake1_score) or  # Both died but snake2 had higher score
+                    (not snake1_died and not snake2_died and snake2_score > snake1_score)  # Neither died but snake2 had higher score
+                )
+
+                if snake2_wins:
+                    # Snake 2 (red) won
+                    next_maze = menu.show_game_over(snake2_score, 'red')
+                else:
+                    # Snake 1 (green) won or it was a draw
+                    next_maze = menu.show_game_over(snake1_score, 'green')
+            else:
+                # Single snake game - always green
+                next_maze = menu.show_game_over(self.env.snake1.score, 'green')
+
             if next_maze is None:
                 break
             else:
-                # Update environment with new maze
+                # Update maze path for next round
                 maze_path = os.path.join("mazes", next_maze['maze'] if isinstance(next_maze, dict) else next_maze)
-                self.env.update_maze(maze_path)
 
 if __name__ == "__main__":
     try:

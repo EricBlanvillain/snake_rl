@@ -7,6 +7,9 @@ class Maze:
     def __init__(self, filepath=None):
         self.grid = [[EMPTY for _ in range(GRID_WIDTH)] for _ in range(GRID_HEIGHT)]
         self.barriers = set()
+        self.filepath = filepath
+        self.is_loaded = False  # Track if maze was loaded successfully
+
         if filepath and os.path.exists(filepath):
             self.load_maze(filepath)
         else:
@@ -23,25 +26,47 @@ class Maze:
         return GRID_HEIGHT
 
     def load_maze(self, filepath):
+        """Load maze from file and return success status"""
         try:
+            if not os.path.exists(filepath):
+                print(f"Error: Maze file '{filepath}' does not exist")
+                self.is_loaded = False
+                return False
+
             with open(filepath, 'r') as f:
                 lines = f.readlines()
+                if not lines:
+                    print(f"Error: Maze file '{filepath}' is empty")
+                    self.is_loaded = False
+                    return False
+
+                # Clear existing barriers before loading new ones
+                self.grid = [[EMPTY for _ in range(GRID_WIDTH)] for _ in range(GRID_HEIGHT)]
+                self.barriers.clear()
+
                 for r, line in enumerate(lines):
-                    # Ensure we don't read more lines than GRID_HEIGHT
                     if r >= GRID_HEIGHT: break
                     line = line.strip()
                     for c, char in enumerate(line):
-                         # Ensure we don't read more chars than GRID_WIDTH
                         if c >= GRID_WIDTH: break
                         if char == '#':
                             self.grid[r][c] = WALL
-                            self.barriers.add((c, r)) # Store as (x, y)
+                            self.barriers.add((c, r))
                         else:
                             self.grid[r][c] = EMPTY
-            print(f"Loaded maze from {filepath}")
+
+                # Verify that we loaded at least some walls
+                if not self.barriers:
+                    print(f"Warning: No walls found in maze file '{filepath}'")
+
+            self.filepath = filepath  # Update filepath after successful load
+            self.is_loaded = True
+            print(f"Successfully loaded maze from {filepath} with {len(self.barriers)} walls")
+            return True
         except Exception as e:
-            print(f"Error loading maze from {filepath}: {e}")
-            # self._add_boundary_walls() # Fallback?
+            print(f"Error loading maze from {filepath}: {str(e)}")
+            self.is_loaded = False
+            return False
 
     # def _add_boundary_walls(self):
     #     for r in range(GRID_HEIGHT):
